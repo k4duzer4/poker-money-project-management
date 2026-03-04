@@ -1,79 +1,170 @@
-# Projeto referente à cadeira de Gerenciamento de Projetos (UEPB)
+# ♠️ Chipz
 
-# Poker Cash - Guia de execução (Backend + Frontend + Supabase)
+<p align="center">
+  <b>Gestão moderna para mesas de poker cash game</b><br/>
+  Controle de autenticação, mesas e base financeira em uma arquitetura fullstack TypeScript.
+</p>
 
-Este guia mostra o passo a passo para rodar o sistema localmente, incluindo a configuração do banco de dados no Supabase.
-
-## 1) Pré-requisitos
-
-- Node.js 20+
-- npm 10+
-- Conta no Supabase
-
-> Dica (Windows): confira versões com:
->
-> ```bash
-> node -v
-> npm -v
-> ```
+<p align="center">
+  <img alt="Node" src="https://img.shields.io/badge/Node.js-20+-339933?logo=node.js&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white" />
+  <img alt="Fastify" src="https://img.shields.io/badge/Fastify-5.x-000000?logo=fastify&logoColor=white" />
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" />
+  <img alt="Prisma" src="https://img.shields.io/badge/Prisma-ORM-2D3748?logo=prisma&logoColor=white" />
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?logo=postgresql&logoColor=white" />
+</p>
 
 ---
 
-## 2) Clonar e abrir o projeto
+## ✨ Visão geral
+
+O **Chipz** é uma plataforma web para organizar mesas de poker cash game, com foco em clareza financeira, autenticação segura e base pronta para evolução do domínio.
+
+### ✅ O que o projeto já entrega
+
+- 🔐 Cadastro, login e sessão com JWT
+- 🧩 Backend modular por contexto (`auth`, `tables`, `players`, `transactions`)
+- 🗃️ Persistência relacional com Prisma + PostgreSQL
+- 📱 Frontend React responsivo para operação rápida
+
+> ℹ️ Os módulos de **players** e **transactions** já possuem contrato e namespace definidos e estão preparados para expansão funcional.
+
+---
+
+## 🧱 Stack técnica
+
+| Camada | Tecnologias |
+|---|---|
+| Backend | Node.js, Fastify, TypeScript, Prisma, Zod, JWT, bcrypt |
+| Banco de dados | PostgreSQL (Supabase) |
+| Frontend | React 19, TypeScript, Vite, React Router, Bootstrap |
+
+---
+
+## 🏗️ Arquitetura e engenharia
+
+### 🔭 Visão de arquitetura
+
+O repositório é dividido em duas aplicações principais:
+
+- `backend`: API HTTP, regras de domínio e acesso a dados
+- `frontend`: SPA responsável pela interface do usuário
+
+Fluxo principal:
+
+1. 👤 Usuário autentica no frontend
+2. 🌐 Frontend consome API REST no backend
+3. 🛡️ Backend valida JWT nas rotas protegidas
+4. 🗄️ Backend persiste e consulta dados no PostgreSQL via Prisma
+
+### 🧠 Princípios aplicados
+
+- **Modularidade por domínio**: rotas separadas por contexto (`auth`, `tables`, `players`, `transactions`)
+- **Validação na borda**: payloads e variáveis de ambiente validados com Zod
+- **Configuração centralizada**: parsing e normalização de env em um único módulo
+- **Segurança de credenciais**: hash de senha (`bcrypt`) + autenticação stateless com JWT
+- **Escalabilidade de dados**: schema relacional com índices e enums de domínio
+
+### 🗂️ Modelo de dados (resumo)
+
+**Entidades principais**
+
+- `User`
+- `Table`
+- `TablePlayer`
+- `Transaction`
+
+**Enums de domínio**
+
+- `TableStatus` → `OPEN`, `CLOSED`
+- `PlayerStatus` → `ACTIVE`, `LEFT`
+- `TxType` → `BUY_IN`, `REBUY`, `CASH_OUT`, `ADJUSTMENT`
+
+---
+
+## 📁 Estrutura de pastas (alto nível)
+
+```text
+.
+├─ backend/
+│  ├─ prisma/
+│  │  ├─ schema.prisma
+│  │  └─ migrations/
+│  └─ src/
+│     ├─ config/
+│     ├─ db/
+│     ├─ modules/
+│     │  ├─ auth/
+│     │  ├─ tables/
+│     │  ├─ players/
+│     │  └─ transactions/
+│     └─ shared/
+└─ frontend/
+   └─ src/
+      ├─ pages/
+      ├─ services/
+      ├─ store/
+      └─ styles/
+```
+
+---
+
+## 🚀 Como executar localmente
+
+### 1) Pré-requisitos
+
+- Node.js 20+
+- npm 10+
+- PostgreSQL (recomendado: Supabase)
+
+Verificação rápida:
+
+```bash
+node -v
+npm -v
+```
+
+### 2) Clonar e acessar
 
 ```bash
 git clone <URL_DO_REPOSITORIO>
 cd poker-cash
 ```
 
----
+### 3) Configurar banco no Supabase
 
-## 3) Criar o banco no Supabase
+1. Crie um projeto no Supabase.
+2. Copie a connection string PostgreSQL (direct connection, porta 5432).
+3. Garanta `?sslmode=require` ao final da URL.
 
-1. Acesse o painel do Supabase e crie um novo projeto.
-2. Aguarde o provisionamento.
-3. No painel do projeto, copie a **connection string** PostgreSQL.
-   - Caminho comum: `Project Settings > Database > Connection string`.
-4. Use a conexão **direct connection** (porta 5432), não a de pooler.
-5. Garanta que a URL contenha `?sslmode=require` no final.
-
-Exemplo de formato:
+Exemplo:
 
 ```text
 postgresql://postgres:SUA_SENHA@db.<project-ref>.supabase.co:5432/postgres?sslmode=require
 ```
 
----
+### 4) Configurar variáveis de ambiente
 
-## 4) Configurar variáveis de ambiente
-
-### 4.1 Backend
-
-Crie/edite o arquivo `backend/.env` com este modelo:
+#### Backend (`backend/.env`)
 
 ```env
 DATABASE_URL=postgresql://postgres:SUA_SENHA@db.<project-ref>.supabase.co:5432/postgres?sslmode=require
 JWT_SECRET=troque-por-um-segredo-forte
 PORT=3333
 CORS_ORIGIN=http://localhost:5173
-ADMIN_EMAIL=admin@pokercash.local
+ADMIN_EMAIL=admin@chipz.local
 ADMIN_PASSWORD=troque-por-uma-senha-forte
 ```
 
-### 4.2 Frontend
-
-Crie/edite o arquivo `frontend/.env`:
+#### Frontend (`frontend/.env`)
 
 ```env
 VITE_API_URL=http://localhost:3333
-VITE_APP_NAME=Poker Cash
+VITE_APP_NAME=Chipz
+VITE_DEMO_AUTH=false
 ```
 
----
-
-## 5) Instalar dependências
-
-No diretório raiz do projeto, execute:
+### 5) Instalar dependências
 
 ```bash
 cd backend
@@ -82,9 +173,7 @@ cd ../frontend
 npm install
 ```
 
----
-
-## 6) Aplicar migrações no banco (Supabase)
+### 6) Preparar banco (migrations)
 
 No diretório `backend`:
 
@@ -93,53 +182,66 @@ npx prisma generate
 npx prisma migrate deploy
 ```
 
-Se quiser validar estrutura e dados pelo Prisma Studio:
+Opcional (inspeção visual):
 
 ```bash
 npx prisma studio
 ```
 
----
-
-## 7) Rodar o backend
-
-No diretório `backend`:
+### 7) Subir backend
 
 ```bash
+cd backend
 npm run dev
 ```
 
-Servidor esperado:
+Backend em `http://localhost:3333`.
 
-- API: `http://localhost:3333`
-- Health simples: `GET /` retorna `{ "message": "hello world" }`
+Health-check:
 
----
+- `GET /` → `{ "message": "hello world" }`
 
-## 8) Rodar o frontend
+### 8) Subir frontend
 
-Em outro terminal, no diretório `frontend`:
+Em outro terminal:
 
 ```bash
+cd frontend
 npm run dev
 ```
 
-URL padrão do Vite:
+Frontend em `http://localhost:5173`.
 
-- `http://localhost:5173`
+### 9) Fluxo rápido de validação
 
----
-
-## 9) Fluxo básico para testar
-
-1. Abrir `http://localhost:5173`
-2. Registrar usuário
-3. Fazer login
-4. Confirmar que o frontend recebe token da rota `POST /auth/login`
+1. Acesse `http://localhost:5173`
+2. Crie uma conta
+3. Faça login
+4. Verifique geração/persistência do token
+5. Crie uma mesa e valide o retorno da API
 
 ---
 
-## 10) Comandos úteis
+## 🔌 API atual (resumo)
+
+### Auth
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /auth/me` (protegida por Bearer token)
+
+### Tables
+
+- `GET /tables` (protegida)
+- `POST /tables` (protegida)
+
+### Players & Transactions
+
+- Rotas base presentes (`/players`, `/transactions`) para evolução incremental do domínio
+
+---
+
+## 🛠️ Scripts úteis
 
 ### Backend
 
@@ -155,19 +257,29 @@ npm run start
 npm run dev
 npm run build
 npm run preview
+npm run lint
 ```
 
 ---
 
-## 11) Troubleshooting rápido
+## 🧯 Troubleshooting
 
-- **Erro de conexão com banco**: revise `DATABASE_URL`, senha e `sslmode=require`.
-- **CORS bloqueando frontend**: confira `CORS_ORIGIN=http://localhost:5173` no `backend/.env`.
-- **Porta ocupada**: altere `PORT` no backend e ajuste `VITE_API_URL` no frontend.
-- **Migração falhou**: rode novamente no `backend`:
-  - `npx prisma generate`
-  - `npx prisma migrate deploy`
+- **Erro de conexão com banco** → revise `DATABASE_URL`, credenciais e `sslmode=require`
+- **Erro de CORS** → confira `CORS_ORIGIN` no backend e URL do frontend
+- **Porta ocupada** → altere `PORT` e ajuste `VITE_API_URL`
+- **Falha em migration** → execute novamente `npx prisma generate` e `npx prisma migrate deploy`
 
 ---
 
-Pronto. Com isso, backend, frontend e banco Supabase devem subir localmente.
+## 🧭 Roadmap técnico sugerido
+
+- [ ] Implementar regras completas de `players` e `transactions`
+- [ ] Adicionar testes automatizados (unitários + integração)
+- [ ] Criar pipeline CI (lint, build, testes e migrações)
+- [ ] Versionar contrato da API (OpenAPI/Swagger)
+
+---
+
+<p align="center">
+  Feito com ♠️ por quem curte produto, engenharia e poker.
+</p>

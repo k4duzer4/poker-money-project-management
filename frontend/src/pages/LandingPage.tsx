@@ -62,7 +62,7 @@ export const LandingPage = () => {
             <h1>Transforme sua Mesa de Poker em um Sistema Profissional</h1>
             <p>
               Chega de anotações confusas, cálculos manuais e discussões sobre saldo.
-              O Poker Cash automatiza o controle de buy-ins, lucros e saldos em tempo real.
+              O Chipz automatiza o controle de buy-ins, lucros e saldos em tempo real.
             </p>
             <div className="hero-cta-group">
               {isAuthenticated ? (
