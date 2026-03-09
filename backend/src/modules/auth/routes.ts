@@ -7,8 +7,50 @@ import { env } from '../../config/env';
 import { prisma } from '../../db/prisma';
 import { requireAuth } from '../../shared/middlewares/auth';
 
+const authErrorSchema = {
+  type: 'object',
+  properties: {
+    message: { type: 'string' },
+  },
+  required: ['message'],
+} as const;
+
 export const authRoutes = async (app: FastifyInstance) => {
-  app.post('/register', async (request, reply) => {
+  app.post('/register', {
+    schema: {
+      tags: ['Auth'],
+      summary: 'Registrar usuário',
+      description: 'Cria uma conta de usuário com e-mail e senha.',
+      body: {
+        type: 'object',
+        properties: {
+          email: { type: 'string', format: 'email' },
+          password: { type: 'string', minLength: 6 },
+        },
+        required: ['email', 'password'],
+        additionalProperties: false,
+      },
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            email: { type: 'string', format: 'email' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+          required: ['id', 'email', 'createdAt'],
+        },
+        400: authErrorSchema,
+        409: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' },
+          },
+          required: ['message'],
+        },
+      },
+    },
+  }, async (request, reply) => {
     const bodySchema = z.object({
       email: z.string().email(),
       password: z.string().min(6),
@@ -51,7 +93,39 @@ export const authRoutes = async (app: FastifyInstance) => {
     return reply.status(201).send(user);
   });
 
-  app.post('/login', async (request, reply) => {
+  app.post('/login', {
+    schema: {
+      tags: ['Auth'],
+      summary: 'Login',
+      description: 'Autentica o usuário e retorna token JWT válido por 7 dias.',
+      body: {
+        type: 'object',
+        properties: {
+          email: { type: 'string', format: 'email' },
+          password: { type: 'string', minLength: 1 },
+        },
+        required: ['email', 'password'],
+        additionalProperties: false,
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            token: { type: 'string' },
+          },
+          required: ['token'],
+        },
+        400: authErrorSchema,
+        401: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' },
+          },
+          required: ['message'],
+        },
+      },
+    },
+  }, async (request, reply) => {
     const bodySchema = z.object({
       email: z.string().email(),
       password: z.string().min(1),
@@ -95,7 +169,38 @@ export const authRoutes = async (app: FastifyInstance) => {
     return reply.send({ token });
   });
 
-  app.get('/me', { preHandler: requireAuth }, async (request) => {
+  app.get('/me', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Auth'],
+      summary: 'Usuário autenticado',
+      description: 'Retorna os dados do usuário a partir do token Bearer.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            user: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', format: 'uuid' },
+                email: { type: 'string', format: 'email' },
+              },
+              required: ['id', 'email'],
+            },
+          },
+          required: ['user'],
+        },
+        401: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' },
+          },
+          required: ['message'],
+        },
+      },
+    },
+  }, async (request) => {
     return {
       user: request.user,
     };
