@@ -1193,6 +1193,21 @@ main.container {
     background: rgba(148, 163, 184, 0.06);
   }
 
+  .cashout-row-loss {
+    border-color: rgba(239, 68, 68, 0.28);
+    background: rgba(239, 68, 68, 0.08);
+  }
+
+  .cashout-row-neutral {
+    border-color: rgba(250, 204, 21, 0.28);
+    background: rgba(250, 204, 21, 0.08);
+  }
+
+  .cashout-row-win {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.09);
+  }
+
   .player-avatar {
     width: 40px;
     height: 40px;
@@ -1249,6 +1264,35 @@ main.container {
     gap: 6px;
     min-height: 32px;
     padding-inline: 12px;
+  }
+
+  .cashout-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 999px;
+    padding: 4px 9px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border: 1px solid transparent;
+  }
+
+  .cashout-status-badge.loss {
+    color: #fecaca;
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.38);
+  }
+
+  .cashout-status-badge.neutral {
+    color: #fde68a;
+    background: rgba(250, 204, 21, 0.18);
+    border-color: rgba(250, 204, 21, 0.38);
+  }
+
+  .cashout-status-badge.win {
+    color: #bbf7d0;
+    background: rgba(34, 197, 94, 0.2);
+    border-color: rgba(34, 197, 94, 0.4);
   }
 
   .mesa-close-block {
