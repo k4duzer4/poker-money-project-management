@@ -199,7 +199,11 @@ Backend em `http://localhost:3333`.
 
 Health-check:
 
-- `GET /` → `{ "message": "hello world" }`
+- `GET /health` → `{ "message": "hello world" }`
+
+Swagger UI:
+
+- `GET /docs`
 
 ### 8) Subir frontend
 

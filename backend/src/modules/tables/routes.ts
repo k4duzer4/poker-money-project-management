@@ -28,8 +28,52 @@ const amountByType: Record<TxType, (amount: number) => number> = {
   CASH_OUT: (amount) => -amount,
 };
 
+const tableResponseSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+    ownerUserId: { type: 'string', format: 'uuid' },
+    name: { type: 'string' },
+    blinds: { type: 'string' },
+    currency: { type: 'string' },
+    status: { type: 'string', enum: ['OPEN', 'CLOSED'] },
+    createdAt: { type: 'string', format: 'date-time' },
+    closedAt: { type: ['string', 'null'], format: 'date-time' },
+  },
+  required: ['id', 'ownerUserId', 'name', 'blinds', 'currency', 'status', 'createdAt'],
+} as const;
+
+const simpleMessageErrorSchema = {
+  type: 'object',
+  properties: {
+    message: { type: 'string' },
+  },
+  required: ['message'],
+} as const;
+
 export const tablesRoutes = async (app: FastifyInstance) => {
-  app.get('/', { preHandler: requireAuth }, async (request) => {
+  app.get('/', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Listar mesas do usuário',
+      description: 'Retorna todas as mesas pertencentes ao usuário autenticado, ordenadas da mais recente para a mais antiga.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            tables: {
+              type: 'array',
+              items: tableResponseSchema,
+            },
+          },
+          required: ['tables'],
+        },
+        401: simpleMessageErrorSchema,
+      },
+    },
+  }, async (request) => {
     const tables = await prisma.table.findMany({
       where: {
         ownerUserId: request.user.id,
@@ -42,7 +86,36 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     return { tables };
   });
 
-  app.post('/', { preHandler: requireAuth }, async (request, reply) => {
+  app.post('/', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Criar mesa',
+      description: 'Cria uma nova mesa de cash game para o usuário autenticado.',
+      security: [{ bearerAuth: [] }],
+      body: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', minLength: 1 },
+          blinds: { type: 'string', minLength: 1 },
+          currency: { type: 'string', minLength: 1 },
+        },
+        required: ['name', 'blinds', 'currency'],
+        additionalProperties: false,
+      },
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            table: tableResponseSchema,
+          },
+          required: ['table'],
+        },
+        400: simpleMessageErrorSchema,
+        401: simpleMessageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedBody = createTableBodySchema.safeParse(request.body);
 
     if (!parsedBody.success) {
@@ -66,7 +139,107 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     return reply.status(201).send({ table });
   });
 
-  app.get('/:tableId', { preHandler: requireAuth }, async (request, reply) => {
+  app.get('/:tableId', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Detalhar mesa',
+      description: 'Retorna dados da mesa, jogadores, transações e um resumo financeiro por jogador.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          tableId: { type: 'string', format: 'uuid' },
+        },
+        required: ['tableId'],
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            table: {
+              allOf: [
+                tableResponseSchema,
+                {
+                  type: 'object',
+                  properties: {
+                    players: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', format: 'uuid' },
+                          tableId: { type: 'string', format: 'uuid' },
+                          name: { type: 'string' },
+                          status: { type: 'string', enum: ['ACTIVE', 'LEFT'] },
+                          createdAt: { type: 'string', format: 'date-time' },
+                        },
+                        required: ['id', 'tableId', 'name', 'status', 'createdAt'],
+                      },
+                    },
+                    transactions: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', format: 'uuid' },
+                          tableId: { type: 'string', format: 'uuid' },
+                          tablePlayerId: { type: 'string', format: 'uuid' },
+                          type: { type: 'string', enum: ['BUY_IN', 'REBUY', 'CASH_OUT', 'ADJUSTMENT'] },
+                          amountCents: { type: 'integer' },
+                          createdAt: { type: 'string', format: 'date-time' },
+                          note: { type: ['string', 'null'] },
+                          tablePlayer: {
+                            type: 'object',
+                            properties: {
+                              id: { type: 'string', format: 'uuid' },
+                              name: { type: 'string' },
+                              status: { type: 'string', enum: ['ACTIVE', 'LEFT'] },
+                            },
+                            required: ['id', 'name', 'status'],
+                          },
+                        },
+                        required: ['id', 'tableId', 'tablePlayerId', 'type', 'amountCents', 'createdAt', 'tablePlayer'],
+                      },
+                    },
+                  },
+                  required: ['players', 'transactions'],
+                },
+              ],
+            },
+            summary: {
+              type: 'object',
+              properties: {
+                totalPlayers: { type: 'integer' },
+                activePlayers: { type: 'integer' },
+                totalTransactions: { type: 'integer' },
+                players: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      playerId: { type: 'string', format: 'uuid' },
+                      name: { type: 'string' },
+                      status: { type: 'string', enum: ['ACTIVE', 'LEFT'] },
+                      netCents: { type: 'integer' },
+                      buyInCents: { type: 'integer' },
+                      cashOutCents: { type: 'integer' },
+                    },
+                    required: ['playerId', 'name', 'status', 'netCents', 'buyInCents', 'cashOutCents'],
+                  },
+                },
+              },
+              required: ['totalPlayers', 'activePlayers', 'totalTransactions', 'players'],
+            },
+          },
+          required: ['table', 'summary'],
+        },
+        400: simpleMessageErrorSchema,
+        401: simpleMessageErrorSchema,
+        404: simpleMessageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
 
     if (!parsedParams.success) {
@@ -149,7 +322,43 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     return { table, summary };
   });
 
-  app.patch('/:tableId', { preHandler: requireAuth }, async (request, reply) => {
+  app.patch('/:tableId', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Atualizar mesa',
+      description: 'Atualiza nome, blinds e/ou moeda de uma mesa.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          tableId: { type: 'string', format: 'uuid' },
+        },
+        required: ['tableId'],
+      },
+      body: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', minLength: 1 },
+          blinds: { type: 'string', minLength: 1 },
+          currency: { type: 'string', minLength: 1 },
+        },
+        additionalProperties: false,
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            table: tableResponseSchema,
+          },
+          required: ['table'],
+        },
+        400: simpleMessageErrorSchema,
+        401: simpleMessageErrorSchema,
+        404: simpleMessageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
     const parsedBody = updateTableBodySchema.safeParse(request.body);
 
@@ -191,7 +400,35 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     return { table: updatedTable };
   });
 
-  app.patch('/:tableId/close', { preHandler: requireAuth }, async (request, reply) => {
+  app.patch('/:tableId/close', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Encerrar mesa',
+      description: 'Altera o status da mesa para CLOSED e define data/hora de encerramento.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          tableId: { type: 'string', format: 'uuid' },
+        },
+        required: ['tableId'],
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            table: tableResponseSchema,
+          },
+          required: ['table'],
+        },
+        400: simpleMessageErrorSchema,
+        401: simpleMessageErrorSchema,
+        404: simpleMessageErrorSchema,
+        409: simpleMessageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
 
     if (!parsedParams.success) {
@@ -231,7 +468,35 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     return { table: closedTable };
   });
 
-  app.patch('/:tableId/reopen', { preHandler: requireAuth }, async (request, reply) => {
+  app.patch('/:tableId/reopen', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Reabrir mesa',
+      description: 'Altera o status da mesa para OPEN e remove data de encerramento.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          tableId: { type: 'string', format: 'uuid' },
+        },
+        required: ['tableId'],
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            table: tableResponseSchema,
+          },
+          required: ['table'],
+        },
+        400: simpleMessageErrorSchema,
+        401: simpleMessageErrorSchema,
+        404: simpleMessageErrorSchema,
+        409: simpleMessageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
 
     if (!parsedParams.success) {

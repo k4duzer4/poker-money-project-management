@@ -5,6 +5,26 @@ import { z } from 'zod';
 import { prisma } from '../../db/prisma';
 import { requireAuth } from '../../shared/middlewares/auth';
 
+const playerResponseSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+    tableId: { type: 'string', format: 'uuid' },
+    name: { type: 'string' },
+    status: { type: 'string', enum: ['ACTIVE', 'LEFT'] },
+    createdAt: { type: 'string', format: 'date-time' },
+  },
+  required: ['id', 'tableId', 'name', 'status', 'createdAt'],
+} as const;
+
+const messageErrorSchema = {
+  type: 'object',
+  properties: {
+    message: { type: 'string' },
+  },
+  required: ['message'],
+} as const;
+
 export const playersRoutes = async (app: FastifyInstance) => {
   const tablePathSchema = z.object({
     tableId: z.string().uuid(),
@@ -22,7 +42,37 @@ export const playersRoutes = async (app: FastifyInstance) => {
     name: z.string().trim().min(1),
   }).strict();
 
-  app.get('/table/:tableId', { preHandler: requireAuth }, async (request, reply) => {
+  app.get('/table/:tableId', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Players'],
+      summary: 'Listar jogadores da mesa',
+      description: 'Retorna os jogadores de uma mesa do usuário autenticado.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          tableId: { type: 'string', format: 'uuid' },
+        },
+        required: ['tableId'],
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            players: {
+              type: 'array',
+              items: playerResponseSchema,
+            },
+          },
+          required: ['players'],
+        },
+        400: messageErrorSchema,
+        401: messageErrorSchema,
+        404: messageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
 
     if (!parsedParams.success) {
@@ -58,7 +108,43 @@ export const playersRoutes = async (app: FastifyInstance) => {
     return { players };
   });
 
-  app.post('/table/:tableId', { preHandler: requireAuth }, async (request, reply) => {
+  app.post('/table/:tableId', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Players'],
+      summary: 'Adicionar jogador',
+      description: 'Adiciona um novo jogador em uma mesa aberta.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          tableId: { type: 'string', format: 'uuid' },
+        },
+        required: ['tableId'],
+      },
+      body: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', minLength: 1 },
+        },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            player: playerResponseSchema,
+          },
+          required: ['player'],
+        },
+        400: messageErrorSchema,
+        401: messageErrorSchema,
+        404: messageErrorSchema,
+        409: messageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
     const parsedBody = createPlayerBodySchema.safeParse(request.body);
 
@@ -101,7 +187,42 @@ export const playersRoutes = async (app: FastifyInstance) => {
     return reply.status(201).send({ player });
   });
 
-  app.patch('/:playerId', { preHandler: requireAuth }, async (request, reply) => {
+  app.patch('/:playerId', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Players'],
+      summary: 'Renomear jogador',
+      description: 'Atualiza o nome de um jogador de uma mesa do usuário.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          playerId: { type: 'string', format: 'uuid' },
+        },
+        required: ['playerId'],
+      },
+      body: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', minLength: 1 },
+        },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            player: playerResponseSchema,
+          },
+          required: ['player'],
+        },
+        400: messageErrorSchema,
+        401: messageErrorSchema,
+        404: messageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = playerPathSchema.safeParse(request.params);
     const parsedBody = updatePlayerBodySchema.safeParse(request.body);
 
@@ -141,7 +262,35 @@ export const playersRoutes = async (app: FastifyInstance) => {
     return { player: updatedPlayer };
   });
 
-  app.patch('/:playerId/leave', { preHandler: requireAuth }, async (request, reply) => {
+  app.patch('/:playerId/leave', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Players'],
+      summary: 'Marcar saída do jogador',
+      description: 'Altera o status do jogador para LEFT.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          playerId: { type: 'string', format: 'uuid' },
+        },
+        required: ['playerId'],
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            player: playerResponseSchema,
+          },
+          required: ['player'],
+        },
+        400: messageErrorSchema,
+        401: messageErrorSchema,
+        404: messageErrorSchema,
+        409: messageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = playerPathSchema.safeParse(request.params);
 
     if (!parsedParams.success) {
@@ -182,7 +331,35 @@ export const playersRoutes = async (app: FastifyInstance) => {
     return { player: updatedPlayer };
   });
 
-  app.patch('/:playerId/reactivate', { preHandler: requireAuth }, async (request, reply) => {
+  app.patch('/:playerId/reactivate', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Players'],
+      summary: 'Reativar jogador',
+      description: 'Altera o status do jogador para ACTIVE em mesa aberta.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          playerId: { type: 'string', format: 'uuid' },
+        },
+        required: ['playerId'],
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            player: playerResponseSchema,
+          },
+          required: ['player'],
+        },
+        400: messageErrorSchema,
+        401: messageErrorSchema,
+        404: messageErrorSchema,
+        409: messageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = playerPathSchema.safeParse(request.params);
 
     if (!parsedParams.success) {
@@ -232,7 +409,29 @@ export const playersRoutes = async (app: FastifyInstance) => {
     return { player: updatedPlayer };
   });
 
-  app.delete('/:playerId', { preHandler: requireAuth }, async (request, reply) => {
+  app.delete('/:playerId', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Players'],
+      summary: 'Remover jogador',
+      description: 'Remove jogador sem transações associadas.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          playerId: { type: 'string', format: 'uuid' },
+        },
+        required: ['playerId'],
+      },
+      response: {
+        204: { type: 'null', description: 'Jogador removido com sucesso.' },
+        400: messageErrorSchema,
+        401: messageErrorSchema,
+        404: messageErrorSchema,
+        409: messageErrorSchema,
+      },
+    },
+  }, async (request, reply) => {
     const parsedParams = playerPathSchema.safeParse(request.params);
 
     if (!parsedParams.success) {
