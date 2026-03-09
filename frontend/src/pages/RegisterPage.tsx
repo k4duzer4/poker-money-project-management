@@ -19,12 +19,8 @@ export const RegisterPage = () => {
     setLoading(true)
 
     try {
-      const response = await registerRequest({ email, password })
-      setSuccess(
-        response.mode === 'demo'
-          ? 'Cadastro realizado com sucesso (modo demonstração). Redirecionando para login...'
-          : 'Conta criada com sucesso. Redirecionando para login...',
-      )
+      await registerRequest({ email, password })
+      setSuccess('Conta criada com sucesso. Redirecionando para login...')
 
       setTimeout(() => {
         navigate('/login')
@@ -86,7 +82,12 @@ export const RegisterPage = () => {
               className="btn btn-primary"
               disabled={loading}
             >
-              {loading ? 'Criando conta...' : 'Criar conta'}
+              {loading ? (
+                <span className="d-inline-flex align-items-center gap-2">
+                  <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+                  Criando conta...
+                </span>
+              ) : 'Criar conta'}
             </button>
           </form>
 

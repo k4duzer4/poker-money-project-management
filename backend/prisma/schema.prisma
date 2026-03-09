@@ -14,7 +14,7 @@ enum TableStatus {
 
 enum PlayerStatus {
   ACTIVE
-  LEFT
+  CASHOUT
 }
 
 enum TxType {
@@ -34,28 +34,41 @@ model User {
 }
 
 model Table {
-  id          String       @id @default(uuid()) @db.Uuid
-  ownerUserId String       @db.Uuid
-  name        String
-  blinds      String
-  currency    String
-  status      TableStatus  @default(OPEN)
-  createdAt   DateTime     @default(now())
-  closedAt    DateTime?
+  id                         String       @id @default(uuid()) @db.Uuid
+  ownerUserId                String       @db.Uuid
+  name                       String
+  blinds                     String
+  currency                   String
+  status                     TableStatus  @default(OPEN)
+  createdAt                  DateTime     @default(now())
+  closedAt                   DateTime?
+  valorFichaCents            Int          @default(100)
+  buyInMinimoCents           Int          @default(5000)
+  buyInMaximoCents           Int?
+  permitirRebuy              Boolean      @default(true)
+  limiteRebuys               Int          @default(0)
+  totalMesaCents             Int          @default(0)
+  ajusteProporcionalAplicado Boolean      @default(false)
 
   owner       User         @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
   players     TablePlayer[]
   transactions Transaction[]
+  rankings    Ranking[]
 
   @@index([ownerUserId])
 }
 
 model TablePlayer {
-  id        String       @id @default(uuid()) @db.Uuid
-  tableId   String       @db.Uuid
-  name      String
-  status    PlayerStatus @default(ACTIVE)
-  createdAt DateTime     @default(now())
+  id                String       @id @default(uuid()) @db.Uuid
+  tableId           String       @db.Uuid
+  name              String
+  status            PlayerStatus @default(ACTIVE)
+  createdAt         DateTime     @default(now())
+  buyInInicialCents Int
+  totalInvestidoCents Int
+  valorFinalCents   Int?
+  resultadoCents    Int?
+  cashoutAt         DateTime?
 
   table        Table          @relation(fields: [tableId], references: [id], onDelete: Cascade)
   transactions Transaction[]
@@ -73,8 +86,27 @@ model Transaction {
   note          String?
 
   table       Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
-  tablePlayer TablePlayer @relation(fields: [tablePlayerId], references: [id], onDelete: Restrict)
+  tablePlayer TablePlayer @relation(fields: [tablePlayerId], references: [id], onDelete: Cascade)
 
   @@index([tableId])
   @@index([tablePlayerId])
+}
+
+model Ranking {
+  id              String   @id @default(uuid()) @db.Uuid
+  ownerUserId     String   @db.Uuid
+  tableId         String   @db.Uuid
+  playerName      String
+  totalLucroCents Int      @default(0)
+  partidasJogadas Int      @default(0)
+  partidasGanhas  Int      @default(0)
+  partidasPerdidas Int     @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId])
+  @@index([tableId])
+  @@unique([ownerUserId, playerName])
 }

@@ -34,6 +34,7 @@ app.get(
 );
 
 app.register(cors, {
+	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 	origin: (origin, callback) => {
 		if (!origin) {
 			callback(null, true);

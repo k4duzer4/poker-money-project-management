@@ -3,11 +3,11 @@ import { Link, useNavigate } from 'react-router-dom'
 
 import { appName } from '../services/api'
 import { loginRequest } from '../services/auth'
-import { useAuth } from '../store/auth'
+import { useAuthStore } from '../stores/authStore'
 
 export const LoginPage = () => {
   const navigate = useNavigate()
-  const { signIn } = useAuth()
+  const signIn = useAuthStore((state) => state.signIn)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -22,15 +22,11 @@ export const LoginPage = () => {
 
     try {
       const response = await loginRequest({ email, password })
-      signIn({ token: response.token, email })
-      setSuccess(
-        response.mode === 'demo'
-          ? 'Login realizado com sucesso (modo demonstração).'
-          : 'Login realizado com sucesso.',
-      )
+      await signIn(response.token)
+      setSuccess('Login realizado com sucesso.')
 
       setTimeout(() => {
-        navigate('/')
+        navigate('/app')
       }, 600)
     } catch (requestError) {
       const message =
@@ -88,7 +84,12 @@ export const LoginPage = () => {
               className="btn btn-primary"
               disabled={loading}
             >
-              {loading ? 'Entrando...' : 'Entrar'}
+              {loading ? (
+                <span className="d-inline-flex align-items-center gap-2">
+                  <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+                  Entrando...
+                </span>
+              ) : 'Entrar'}
             </button>
           </form>
 

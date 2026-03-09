@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { TableStatus, TxType } from '@prisma/client';
+import { TableStatus } from '@prisma/client';
 import { z } from 'zod';
 
 import { prisma } from '../../db/prisma';
 import { requireAuth } from '../../shared/middlewares/auth';
+import { calculateTransfers, distributeDifferenceAmongWinners } from './settlement';
 
 const tablePathSchema = z.object({
   tableId: z.string().uuid(),
@@ -13,22 +14,41 @@ const createTableBodySchema = z.object({
   name: z.string().trim().min(1),
   blinds: z.string().trim().min(1),
   currency: z.string().trim().min(1),
-}).strict();
+  valorFichaCents: z.number().int().positive(),
+  buyInMinimoCents: z.number().int().positive(),
+  buyInMaximoCents: z.number().int().positive().optional(),
+  permitirRebuy: z.boolean(),
+  limiteRebuys: z.number().int().min(0),
+}).strict().superRefine((value, context) => {
+  if (value.buyInMaximoCents && value.buyInMaximoCents < value.buyInMinimoCents) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'buyInMaximoCents não pode ser menor que buyInMinimoCents.',
+      path: ['buyInMaximoCents'],
+    });
+  }
+});
 
 const updateTableBodySchema = z.object({
   name: z.string().trim().min(1).optional(),
   blinds: z.string().trim().min(1).optional(),
   currency: z.string().trim().min(1).optional(),
+  valorFichaCents: z.number().int().positive().optional(),
+  buyInMinimoCents: z.number().int().positive().optional(),
+  buyInMaximoCents: z.number().int().positive().nullable().optional(),
+  permitirRebuy: z.boolean().optional(),
+  limiteRebuys: z.number().int().min(0).optional(),
 }).strict();
 
-const amountByType: Record<TxType, (amount: number) => number> = {
-  BUY_IN: (amount) => amount,
-  REBUY: (amount) => amount,
-  ADJUSTMENT: (amount) => amount,
-  CASH_OUT: (amount) => -amount,
-};
+const simpleMessageErrorSchema = {
+  type: 'object',
+  properties: {
+    message: { type: 'string' },
+  },
+  required: ['message'],
+} as const;
 
-const tableResponseSchema = {
+const tableDetailTableSchema = {
   type: 'object',
   properties: {
     id: { type: 'string', format: 'uuid' },
@@ -39,17 +59,110 @@ const tableResponseSchema = {
     status: { type: 'string', enum: ['OPEN', 'CLOSED'] },
     createdAt: { type: 'string', format: 'date-time' },
     closedAt: { type: ['string', 'null'], format: 'date-time' },
+    valorFichaCents: { type: 'integer' },
+    buyInMinimoCents: { type: 'integer' },
+    buyInMaximoCents: { type: ['integer', 'null'] },
+    permitirRebuy: { type: 'boolean' },
+    limiteRebuys: { type: 'integer' },
+    totalMesaCents: { type: 'integer' },
+    ajusteProporcionalAplicado: { type: 'boolean' },
+    players: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          tableId: { type: 'string', format: 'uuid' },
+          name: { type: 'string' },
+          status: { type: 'string', enum: ['ACTIVE', 'CASHOUT'] },
+          createdAt: { type: 'string', format: 'date-time' },
+          buyInInicialCents: { type: 'integer' },
+          totalInvestidoCents: { type: 'integer' },
+          valorFinalCents: { type: ['integer', 'null'] },
+          resultadoCents: { type: ['integer', 'null'] },
+          cashoutAt: { type: ['string', 'null'], format: 'date-time' },
+        },
+        required: ['id', 'tableId', 'name', 'status', 'createdAt', 'buyInInicialCents', 'totalInvestidoCents'],
+      },
+    },
+    transactions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          tableId: { type: 'string', format: 'uuid' },
+          tablePlayerId: { type: 'string', format: 'uuid' },
+          type: { type: 'string', enum: ['BUY_IN', 'REBUY', 'CASH_OUT', 'ADJUSTMENT'] },
+          amountCents: { type: 'integer' },
+          createdAt: { type: 'string', format: 'date-time' },
+          note: { type: ['string', 'null'] },
+        },
+        required: ['id', 'tableId', 'tablePlayerId', 'type', 'amountCents', 'createdAt'],
+      },
+    },
   },
-  required: ['id', 'ownerUserId', 'name', 'blinds', 'currency', 'status', 'createdAt'],
+  required: [
+    'id',
+    'ownerUserId',
+    'name',
+    'blinds',
+    'currency',
+    'status',
+    'createdAt',
+    'valorFichaCents',
+    'buyInMinimoCents',
+    'permitirRebuy',
+    'limiteRebuys',
+    'totalMesaCents',
+    'ajusteProporcionalAplicado',
+    'players',
+    'transactions',
+  ],
 } as const;
 
-const simpleMessageErrorSchema = {
+const tableSummarySchema = {
   type: 'object',
   properties: {
-    message: { type: 'string' },
+    totalPlayers: { type: 'integer' },
+    activePlayers: { type: 'integer' },
+    totalTransactions: { type: 'integer' },
+    totalInvestidoCents: { type: 'integer' },
+    totalFinalCents: { type: 'integer' },
+    totalMesaCents: { type: 'integer' },
+    players: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          playerId: { type: 'string', format: 'uuid' },
+          name: { type: 'string' },
+          status: { type: 'string', enum: ['ACTIVE', 'CASHOUT'] },
+          buyInInicialCents: { type: 'integer' },
+          totalInvestidoCents: { type: 'integer' },
+          valorFinalCents: { type: ['integer', 'null'] },
+          resultadoCents: { type: ['integer', 'null'] },
+          rebuysCount: { type: 'integer' },
+        },
+        required: ['playerId', 'name', 'status', 'buyInInicialCents', 'totalInvestidoCents', 'rebuysCount'],
+      },
+    },
   },
-  required: ['message'],
+  required: [
+    'totalPlayers',
+    'activePlayers',
+    'totalTransactions',
+    'totalInvestidoCents',
+    'totalFinalCents',
+    'totalMesaCents',
+    'players',
+  ],
 } as const;
+
+const toTableWhereOwner = (tableId: string, userId: string) => ({
+  id: tableId,
+  ownerUserId: userId,
+});
 
 export const tablesRoutes = async (app: FastifyInstance) => {
   app.get('/', {
@@ -57,7 +170,6 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     schema: {
       tags: ['Tables'],
       summary: 'Listar mesas do usuário',
-      description: 'Retorna todas as mesas pertencentes ao usuário autenticado, ordenadas da mais recente para a mais antiga.',
       security: [{ bearerAuth: [] }],
       response: {
         200: {
@@ -65,22 +177,51 @@ export const tablesRoutes = async (app: FastifyInstance) => {
           properties: {
             tables: {
               type: 'array',
-              items: tableResponseSchema,
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  ownerUserId: { type: 'string', format: 'uuid' },
+                  name: { type: 'string' },
+                  blinds: { type: 'string' },
+                  currency: { type: 'string' },
+                  status: { type: 'string', enum: ['OPEN', 'CLOSED'] },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  closedAt: { type: ['string', 'null'], format: 'date-time' },
+                  valorFichaCents: { type: 'integer' },
+                  buyInMinimoCents: { type: 'integer' },
+                  buyInMaximoCents: { type: ['integer', 'null'] },
+                  permitirRebuy: { type: 'boolean' },
+                  limiteRebuys: { type: 'integer' },
+                  totalMesaCents: { type: 'integer' },
+                  ajusteProporcionalAplicado: { type: 'boolean' },
+                },
+                required: [
+                  'id',
+                  'ownerUserId',
+                  'name',
+                  'blinds',
+                  'currency',
+                  'status',
+                  'createdAt',
+                  'valorFichaCents',
+                  'buyInMinimoCents',
+                  'permitirRebuy',
+                  'limiteRebuys',
+                  'totalMesaCents',
+                  'ajusteProporcionalAplicado',
+                ],
+              },
             },
           },
           required: ['tables'],
         },
-        401: simpleMessageErrorSchema,
       },
     },
   }, async (request) => {
     const tables = await prisma.table.findMany({
-      where: {
-        ownerUserId: request.user.id,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      where: { ownerUserId: request.user.id },
+      orderBy: { createdAt: 'desc' },
     });
 
     return { tables };
@@ -90,29 +231,17 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     preHandler: requireAuth,
     schema: {
       tags: ['Tables'],
-      summary: 'Criar mesa',
-      description: 'Cria uma nova mesa de cash game para o usuário autenticado.',
+      summary: 'Criar mesa com regras de negócio Chipz',
       security: [{ bearerAuth: [] }],
-      body: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', minLength: 1 },
-          blinds: { type: 'string', minLength: 1 },
-          currency: { type: 'string', minLength: 1 },
-        },
-        required: ['name', 'blinds', 'currency'],
-        additionalProperties: false,
-      },
       response: {
         201: {
           type: 'object',
           properties: {
-            table: tableResponseSchema,
+            table: { type: 'object', additionalProperties: true },
           },
           required: ['table'],
         },
         400: simpleMessageErrorSchema,
-        401: simpleMessageErrorSchema,
       },
     },
   }, async (request, reply) => {
@@ -125,14 +254,21 @@ export const tablesRoutes = async (app: FastifyInstance) => {
       });
     }
 
-    const { name, blinds, currency } = parsedBody.data;
-
     const table = await prisma.table.create({
       data: {
         ownerUserId: request.user.id,
-        name,
-        blinds,
-        currency,
+        name: parsedBody.data.name,
+        blinds: parsedBody.data.blinds,
+        currency: parsedBody.data.currency,
+        status: TableStatus.OPEN,
+        closedAt: null,
+        valorFichaCents: parsedBody.data.valorFichaCents,
+        buyInMinimoCents: parsedBody.data.buyInMinimoCents,
+        buyInMaximoCents: parsedBody.data.buyInMaximoCents,
+        permitirRebuy: parsedBody.data.permitirRebuy,
+        limiteRebuys: parsedBody.data.limiteRebuys,
+        totalMesaCents: 0,
+        ajusteProporcionalAplicado: false,
       },
     });
 
@@ -143,100 +279,41 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     preHandler: requireAuth,
     schema: {
       tags: ['Tables'],
-      summary: 'Detalhar mesa',
-      description: 'Retorna dados da mesa, jogadores, transações e um resumo financeiro por jogador.',
+      summary: 'Detalhar mesa com cálculos Chipz',
       security: [{ bearerAuth: [] }],
-      params: {
-        type: 'object',
-        properties: {
-          tableId: { type: 'string', format: 'uuid' },
-        },
-        required: ['tableId'],
-      },
       response: {
         200: {
           type: 'object',
           properties: {
-            table: {
-              allOf: [
-                tableResponseSchema,
-                {
-                  type: 'object',
-                  properties: {
-                    players: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          id: { type: 'string', format: 'uuid' },
-                          tableId: { type: 'string', format: 'uuid' },
-                          name: { type: 'string' },
-                          status: { type: 'string', enum: ['ACTIVE', 'LEFT'] },
-                          createdAt: { type: 'string', format: 'date-time' },
-                        },
-                        required: ['id', 'tableId', 'name', 'status', 'createdAt'],
-                      },
-                    },
-                    transactions: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          id: { type: 'string', format: 'uuid' },
-                          tableId: { type: 'string', format: 'uuid' },
-                          tablePlayerId: { type: 'string', format: 'uuid' },
-                          type: { type: 'string', enum: ['BUY_IN', 'REBUY', 'CASH_OUT', 'ADJUSTMENT'] },
-                          amountCents: { type: 'integer' },
-                          createdAt: { type: 'string', format: 'date-time' },
-                          note: { type: ['string', 'null'] },
-                          tablePlayer: {
-                            type: 'object',
-                            properties: {
-                              id: { type: 'string', format: 'uuid' },
-                              name: { type: 'string' },
-                              status: { type: 'string', enum: ['ACTIVE', 'LEFT'] },
-                            },
-                            required: ['id', 'name', 'status'],
-                          },
-                        },
-                        required: ['id', 'tableId', 'tablePlayerId', 'type', 'amountCents', 'createdAt', 'tablePlayer'],
-                      },
-                    },
-                  },
-                  required: ['players', 'transactions'],
+            table: tableDetailTableSchema,
+            summary: tableSummarySchema,
+            transfers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  from: { type: 'string' },
+                  to: { type: 'string' },
+                  amountCents: { type: 'integer' },
                 },
-              ],
+                required: ['from', 'to', 'amountCents'],
+              },
             },
-            summary: {
+            closure: {
               type: 'object',
               properties: {
-                totalPlayers: { type: 'integer' },
-                activePlayers: { type: 'integer' },
-                totalTransactions: { type: 'integer' },
-                players: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      playerId: { type: 'string', format: 'uuid' },
-                      name: { type: 'string' },
-                      status: { type: 'string', enum: ['ACTIVE', 'LEFT'] },
-                      netCents: { type: 'integer' },
-                      buyInCents: { type: 'integer' },
-                      cashOutCents: { type: 'integer' },
-                    },
-                    required: ['playerId', 'name', 'status', 'netCents', 'buyInCents', 'cashOutCents'],
-                  },
-                },
+                canClose: { type: 'boolean' },
+                hasActivePlayers: { type: 'boolean' },
+                differenceCents: { type: 'integer' },
+                needsProportionalAdjustment: { type: 'boolean' },
               },
-              required: ['totalPlayers', 'activePlayers', 'totalTransactions', 'players'],
+              required: ['canClose', 'hasActivePlayers', 'differenceCents', 'needsProportionalAdjustment'],
             },
           },
-          required: ['table', 'summary'],
+          required: ['table', 'summary', 'transfers', 'closure'],
         },
-        400: simpleMessageErrorSchema,
-        401: simpleMessageErrorSchema,
         404: simpleMessageErrorSchema,
+        400: simpleMessageErrorSchema,
       },
     },
   }, async (request, reply) => {
@@ -249,23 +326,14 @@ export const tablesRoutes = async (app: FastifyInstance) => {
       });
     }
 
-    const { tableId } = parsedParams.data;
-
     const table = await prisma.table.findFirst({
-      where: {
-        id: tableId,
-        ownerUserId: request.user.id,
-      },
+      where: toTableWhereOwner(parsedParams.data.tableId, request.user.id),
       include: {
         players: {
-          orderBy: {
-            createdAt: 'asc',
-          },
+          orderBy: { createdAt: 'asc' },
         },
         transactions: {
-          orderBy: {
-            createdAt: 'asc',
-          },
+          orderBy: { createdAt: 'asc' },
           include: {
             tablePlayer: {
               select: {
@@ -283,80 +351,58 @@ export const tablesRoutes = async (app: FastifyInstance) => {
       return reply.status(404).send({ message: 'Mesa não encontrada.' });
     }
 
-    const playersSummary = new Map<string, { netCents: number; buyInCents: number; cashOutCents: number }>();
+    const totalInvestidoGeral = table.players.reduce((acc, player) => acc + player.totalInvestidoCents, 0);
+    const totalFinalGeral = table.players.reduce((acc, player) => acc + (player.valorFinalCents ?? 0), 0);
+    const differenceCents = totalInvestidoGeral - totalFinalGeral;
+    const hasActivePlayers = table.players.some((player) => player.status === 'ACTIVE');
 
-    for (const player of table.players) {
-      playersSummary.set(player.id, { netCents: 0, buyInCents: 0, cashOutCents: 0 });
-    }
-
-    for (const transaction of table.transactions) {
-      const current = playersSummary.get(transaction.tablePlayerId) ?? {
-        netCents: 0,
-        buyInCents: 0,
-        cashOutCents: 0,
-      };
-
-      current.netCents += amountByType[transaction.type](transaction.amountCents);
-
-      if (transaction.type === TxType.CASH_OUT) {
-        current.cashOutCents += transaction.amountCents;
-      } else {
-        current.buyInCents += transaction.amountCents;
-      }
-
-      playersSummary.set(transaction.tablePlayerId, current);
-    }
+    const transfers = calculateTransfers(
+      table.players
+        .filter((player) => player.resultadoCents !== null)
+        .map((player) => ({
+          name: player.name,
+          resultadoCents: player.resultadoCents ?? 0,
+        })),
+    );
 
     const summary = {
       totalPlayers: table.players.length,
       activePlayers: table.players.filter((player) => player.status === 'ACTIVE').length,
       totalTransactions: table.transactions.length,
+      totalInvestidoCents: totalInvestidoGeral,
+      totalFinalCents: totalFinalGeral,
+      totalMesaCents: table.totalMesaCents,
       players: table.players.map((player) => ({
         playerId: player.id,
         name: player.name,
         status: player.status,
-        ...playersSummary.get(player.id),
+        buyInInicialCents: player.buyInInicialCents,
+        totalInvestidoCents: player.totalInvestidoCents,
+        valorFinalCents: player.valorFinalCents,
+        resultadoCents: player.resultadoCents,
+        rebuysCount: table.transactions.filter((tx) => tx.tablePlayerId === player.id && tx.type === 'REBUY').length,
       })),
     };
 
-    return { table, summary };
+    return {
+      table,
+      summary,
+      transfers,
+      closure: {
+        canClose: !hasActivePlayers,
+        hasActivePlayers,
+        differenceCents,
+        needsProportionalAdjustment: false,
+      },
+    };
   });
 
   app.patch('/:tableId', {
     preHandler: requireAuth,
     schema: {
       tags: ['Tables'],
-      summary: 'Atualizar mesa',
-      description: 'Atualiza nome, blinds e/ou moeda de uma mesa.',
+      summary: 'Atualizar configurações da mesa',
       security: [{ bearerAuth: [] }],
-      params: {
-        type: 'object',
-        properties: {
-          tableId: { type: 'string', format: 'uuid' },
-        },
-        required: ['tableId'],
-      },
-      body: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', minLength: 1 },
-          blinds: { type: 'string', minLength: 1 },
-          currency: { type: 'string', minLength: 1 },
-        },
-        additionalProperties: false,
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            table: tableResponseSchema,
-          },
-          required: ['table'],
-        },
-        400: simpleMessageErrorSchema,
-        401: simpleMessageErrorSchema,
-        404: simpleMessageErrorSchema,
-      },
     },
   }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
@@ -373,19 +419,12 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     }
 
     if (Object.keys(parsedBody.data).length === 0) {
-      return reply.status(400).send({
-        message: 'Informe ao menos um campo para atualização.',
-      });
+      return reply.status(400).send({ message: 'Informe ao menos um campo para atualização.' });
     }
 
     const table = await prisma.table.findFirst({
-      where: {
-        id: parsedParams.data.tableId,
-        ownerUserId: request.user.id,
-      },
-      select: {
-        id: true,
-      },
+      where: toTableWhereOwner(parsedParams.data.tableId, request.user.id),
+      select: { id: true },
     });
 
     if (!table) {
@@ -400,33 +439,12 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     return { table: updatedTable };
   });
 
-  app.patch('/:tableId/close', {
+  app.patch('/:tableId/apply-proportional-adjustment', {
     preHandler: requireAuth,
     schema: {
       tags: ['Tables'],
-      summary: 'Encerrar mesa',
-      description: 'Altera o status da mesa para CLOSED e define data/hora de encerramento.',
+      summary: 'Aplicar ajuste proporcional entre ganhadores',
       security: [{ bearerAuth: [] }],
-      params: {
-        type: 'object',
-        properties: {
-          tableId: { type: 'string', format: 'uuid' },
-        },
-        required: ['tableId'],
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            table: tableResponseSchema,
-          },
-          required: ['table'],
-        },
-        400: simpleMessageErrorSchema,
-        401: simpleMessageErrorSchema,
-        404: simpleMessageErrorSchema,
-        409: simpleMessageErrorSchema,
-      },
     },
   }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
@@ -439,13 +457,107 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     }
 
     const table = await prisma.table.findFirst({
-      where: {
-        id: parsedParams.data.tableId,
-        ownerUserId: request.user.id,
+      where: toTableWhereOwner(parsedParams.data.tableId, request.user.id),
+      include: {
+        players: true,
       },
-      select: {
-        id: true,
-        status: true,
+    });
+
+    if (!table) {
+      return reply.status(404).send({ message: 'Mesa não encontrada.' });
+    }
+
+    if (table.status === TableStatus.CLOSED) {
+      return reply.status(409).send({ message: 'Mesa encerrada não permite ajuste proporcional.' });
+    }
+
+    const totalInvestido = table.players.reduce((acc, player) => acc + player.totalInvestidoCents, 0);
+    const totalFinal = table.players.reduce((acc, player) => acc + (player.valorFinalCents ?? 0), 0);
+    const difference = totalInvestido - totalFinal;
+
+    if (difference === 0) {
+      const updated = await prisma.table.update({
+        where: { id: table.id },
+        data: { ajusteProporcionalAplicado: true },
+      });
+
+      return { table: updated, appliedAdjustments: [] };
+    }
+
+    if (difference < 0) {
+      return reply.status(409).send({
+        message: 'Diferença negativa não pode ser ajustada proporcionalmente pelo algoritmo atual.',
+      });
+    }
+
+    const adjustments = distributeDifferenceAmongWinners(
+      table.players
+        .filter((player) => player.valorFinalCents !== null && player.resultadoCents !== null)
+        .map((player) => ({
+          id: player.id,
+          valorFinalCents: player.valorFinalCents ?? 0,
+          resultadoCents: player.resultadoCents ?? 0,
+        })),
+      difference,
+    );
+
+    if (adjustments.length === 0) {
+      return reply.status(409).send({
+        message: 'Não há ganhadores para absorver o ajuste proporcional.',
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const adjustment of adjustments) {
+        await tx.tablePlayer.update({
+          where: { id: adjustment.id },
+          data: {
+            valorFinalCents: adjustment.novoValorFinalCents,
+            resultadoCents: adjustment.novoResultadoCents,
+          },
+        });
+      }
+
+      await tx.table.update({
+        where: { id: table.id },
+        data: {
+          ajusteProporcionalAplicado: true,
+          totalMesaCents: 0,
+        },
+      });
+    });
+
+    const refreshedTable = await prisma.table.findUnique({
+      where: { id: table.id },
+    });
+
+    return {
+      table: refreshedTable,
+      appliedAdjustments: adjustments,
+    };
+  });
+
+  app.patch('/:tableId/close', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Encerrar mesa com validações de negócio',
+      security: [{ bearerAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const parsedParams = tablePathSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({
+        message: 'Parâmetros inválidos.',
+        errors: parsedParams.error.flatten(),
+      });
+    }
+
+    const table = await prisma.table.findFirst({
+      where: toTableWhereOwner(parsedParams.data.tableId, request.user.id),
+      include: {
+        players: true,
       },
     });
 
@@ -455,6 +567,13 @@ export const tablesRoutes = async (app: FastifyInstance) => {
 
     if (table.status === TableStatus.CLOSED) {
       return reply.status(409).send({ message: 'Mesa já está encerrada.' });
+    }
+
+    const hasActivePlayers = table.players.some((player) => player.status === 'ACTIVE');
+    if (hasActivePlayers) {
+      return reply.status(409).send({
+        message: 'Ainda há jogadores ativos na mesa. Todos precisam fazer cash out para fechar.',
+      });
     }
 
     const closedTable = await prisma.table.update({
@@ -473,28 +592,7 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     schema: {
       tags: ['Tables'],
       summary: 'Reabrir mesa',
-      description: 'Altera o status da mesa para OPEN e remove data de encerramento.',
       security: [{ bearerAuth: [] }],
-      params: {
-        type: 'object',
-        properties: {
-          tableId: { type: 'string', format: 'uuid' },
-        },
-        required: ['tableId'],
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            table: tableResponseSchema,
-          },
-          required: ['table'],
-        },
-        400: simpleMessageErrorSchema,
-        401: simpleMessageErrorSchema,
-        404: simpleMessageErrorSchema,
-        409: simpleMessageErrorSchema,
-      },
     },
   }, async (request, reply) => {
     const parsedParams = tablePathSchema.safeParse(request.params);
@@ -507,14 +605,8 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     }
 
     const table = await prisma.table.findFirst({
-      where: {
-        id: parsedParams.data.tableId,
-        ownerUserId: request.user.id,
-      },
-      select: {
-        id: true,
-        status: true,
-      },
+      where: toTableWhereOwner(parsedParams.data.tableId, request.user.id),
+      select: { id: true, status: true },
     });
 
     if (!table) {

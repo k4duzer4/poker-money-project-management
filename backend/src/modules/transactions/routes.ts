@@ -179,7 +179,7 @@ export const transactionsRoutes = async (app: FastifyInstance) => {
       });
     }
 
-    const { tableId, tablePlayerId, type, amountCents, note } = parsedBody.data;
+    const { tableId } = parsedBody.data;
 
     const table = await prisma.table.findFirst({
       where: {
@@ -200,40 +200,9 @@ export const transactionsRoutes = async (app: FastifyInstance) => {
       return reply.status(409).send({ message: 'Não é possível lançar transações em mesa encerrada.' });
     }
 
-    const player = await prisma.tablePlayer.findFirst({
-      where: {
-        id: tablePlayerId,
-        tableId: table.id,
-      },
-      select: {
-        id: true,
-      },
+    return reply.status(409).send({
+      message: 'Lançamentos manuais estão desabilitados. Use os endpoints de jogadores para buy-in, rebuy e cash out.',
     });
-
-    if (!player) {
-      return reply.status(404).send({ message: 'Jogador não encontrado para esta mesa.' });
-    }
-
-    const transaction = await prisma.transaction.create({
-      data: {
-        tableId: table.id,
-        tablePlayerId: player.id,
-        type,
-        amountCents,
-        note: note ?? null,
-      },
-      include: {
-        tablePlayer: {
-          select: {
-            id: true,
-            name: true,
-            status: true,
-          },
-        },
-      },
-    });
-
-    return reply.status(201).send({ transaction });
   });
 
   app.patch('/:transactionId', {
@@ -287,58 +256,9 @@ export const transactionsRoutes = async (app: FastifyInstance) => {
       });
     }
 
-    if (Object.keys(parsedBody.data).length === 0) {
-      return reply.status(400).send({
-        message: 'Informe ao menos um campo para atualização.',
-      });
-    }
-
-    const transaction = await prisma.transaction.findFirst({
-      where: {
-        id: parsedParams.data.transactionId,
-        table: {
-          ownerUserId: request.user.id,
-        },
-      },
-      select: {
-        id: true,
-        table: {
-          select: {
-            status: true,
-          },
-        },
-      },
+    return reply.status(409).send({
+      message: 'Edição manual de transações está desabilitada para manter consistência contábil da mesa.',
     });
-
-    if (!transaction) {
-      return reply.status(404).send({ message: 'Transação não encontrada.' });
-    }
-
-    if (transaction.table.status === TableStatus.CLOSED) {
-      return reply.status(409).send({ message: 'Não é possível alterar transações de mesa encerrada.' });
-    }
-
-    const updatedTransaction = await prisma.transaction.update({
-      where: {
-        id: transaction.id,
-      },
-      data: {
-        type: parsedBody.data.type,
-        amountCents: parsedBody.data.amountCents,
-        note: parsedBody.data.note,
-      },
-      include: {
-        tablePlayer: {
-          select: {
-            id: true,
-            name: true,
-            status: true,
-          },
-        },
-      },
-    });
-
-    return { transaction: updatedTransaction };
   });
 
   app.delete('/:transactionId', {
@@ -373,37 +293,8 @@ export const transactionsRoutes = async (app: FastifyInstance) => {
       });
     }
 
-    const transaction = await prisma.transaction.findFirst({
-      where: {
-        id: parsedParams.data.transactionId,
-        table: {
-          ownerUserId: request.user.id,
-        },
-      },
-      select: {
-        id: true,
-        table: {
-          select: {
-            status: true,
-          },
-        },
-      },
+    return reply.status(409).send({
+      message: 'Exclusão manual de transações está desabilitada para manter consistência contábil da mesa.',
     });
-
-    if (!transaction) {
-      return reply.status(404).send({ message: 'Transação não encontrada.' });
-    }
-
-    if (transaction.table.status === TableStatus.CLOSED) {
-      return reply.status(409).send({ message: 'Não é possível remover transações de mesa encerrada.' });
-    }
-
-    await prisma.transaction.delete({
-      where: {
-        id: transaction.id,
-      },
-    });
-
-    return reply.status(204).send();
   });
 };

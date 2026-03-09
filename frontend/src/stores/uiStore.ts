@@ -1,25 +1,27 @@
-import { create } from "zustand";
+import { create } from 'zustand';
 
-interface Toast {
+export type ToastType = 'success' | 'error' | 'info';
+
+type Toast = {
   id: number;
   message: string;
-  type: "success" | "error" | "info";
-}
+  type: ToastType;
+};
 
-interface UIState {
+type UIState = {
   toasts: Toast[];
-  addToast: (message: string, type: "success" | "error" | "info") => void;
+  addToast: (message: string, type?: ToastType) => void;
   removeToast: (id: number) => void;
-}
+};
 
 export const useUIStore = create<UIState>((set) => ({
   toasts: [],
-  addToast: (message, type) =>
+  addToast: (message, type = 'info') =>
     set((state) => ({
-      toasts: [...state.toasts, { id: Date.now(), message, type }],
+      toasts: [...state.toasts, { id: Date.now() + Math.floor(Math.random() * 1000), message, type }],
     })),
   removeToast: (id) =>
     set((state) => ({
-      toasts: state.toasts.filter((t) => t.id !== id),
+      toasts: state.toasts.filter((toast) => toast.id !== id),
     })),
 }));

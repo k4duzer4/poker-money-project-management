@@ -1,34 +1,54 @@
-import { create } from "zustand";
-import api from "../services/http";
+import { create } from 'zustand';
 
-interface AuthState {
+import { meRequest } from '../services/auth';
+import type { User } from '../types/domain';
+
+const TOKEN_KEY = 'token';
+const EMAIL_KEY = 'userEmail';
+
+type AuthState = {
   token: string | null;
-  user: { id: string; email: string } | null;
-  signIn: (email: string, password: string) => Promise<void>;
+  user: User | null;
+  bootstrapped: boolean;
+  bootstrapLoading: boolean;
+  signIn: (token: string) => Promise<void>;
   signOut: () => void;
   bootstrap: () => Promise<void>;
-}
+};
 
-export const useAuthStore = create<AuthState>((set) => ({
-  token: localStorage.getItem("token"),
+export const useAuthStore = create<AuthState>((set, get) => ({
+  token: localStorage.getItem(TOKEN_KEY),
   user: null,
-  signIn: async (email, password) => {
-    const { data } = await api.post("/auth/login", { email, password });
-    localStorage.setItem("token", data.token);
-    set({ token: data.token });
-    await (useAuthStore.getState().bootstrap());
+  bootstrapped: false,
+  bootstrapLoading: false,
+  signIn: async (token) => {
+    localStorage.setItem(TOKEN_KEY, token);
+    set({ token });
+    await get().bootstrap();
   },
   signOut: () => {
-    localStorage.removeItem("token");
-    set({ token: null, user: null });
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(EMAIL_KEY);
+    set({ token: null, user: null, bootstrapped: true, bootstrapLoading: false });
   },
   bootstrap: async () => {
+    const token = get().token;
+
+    if (!token) {
+      set({ user: null, bootstrapped: true, bootstrapLoading: false });
+      return;
+    }
+
+    set({ bootstrapLoading: true });
+
     try {
-      const { data } = await api.get("/auth/me");
-      set({ user: data.user });
+      const user = await meRequest();
+      localStorage.setItem(EMAIL_KEY, user.email);
+      set({ user, bootstrapped: true, bootstrapLoading: false });
     } catch {
-      localStorage.removeItem("token");
-      set({ token: null, user: null });
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(EMAIL_KEY);
+      set({ token: null, user: null, bootstrapped: true, bootstrapLoading: false });
     }
   },
 }));

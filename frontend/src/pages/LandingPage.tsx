@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { appName } from '../services/api'
-import { useAuth } from '../store/auth'
+import { useAuthStore } from '../stores/authStore'
 
 export const LandingPage = () => {
-  const { user, isAuthenticated, signOut } = useAuth()
+  const user = useAuthStore((state) => state.user)
+  const token = useAuthStore((state) => state.token)
+  const signOut = useAuthStore((state) => state.signOut)
+  const isAuthenticated = Boolean(token)
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false)
 
   const handleOpenLogoutModal = () => {
@@ -66,7 +69,7 @@ export const LandingPage = () => {
             </p>
             <div className="hero-cta-group">
               {isAuthenticated ? (
-                <Link to="/" className="btn btn-primary btn-lg">
+                <Link to="/app/tables" className="btn btn-primary btn-lg">
                   Gerenciar mesa
                 </Link>
               ) : (
@@ -169,7 +172,7 @@ export const LandingPage = () => {
           <h2>Pronto para organizar sua mesa?</h2>
           <p>Comece em minutos e tenha clareza total dos resultados da sua mesa.</p>
           {isAuthenticated ? (
-            <Link to="/" className="btn btn-primary btn-lg">
+            <Link to="/app/tables" className="btn btn-primary btn-lg">
               Gerenciar mesa
             </Link>
           ) : (
