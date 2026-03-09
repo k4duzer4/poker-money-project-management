@@ -5,9 +5,12 @@ import {
   ArrowLeft,
   Coins,
   DollarSign,
+  Minus,
   LogOut,
   RotateCw,
   Settings,
+  TrendingDown,
+  TrendingUp,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -487,9 +490,36 @@ export default function TableDetail() {
                   const summary = summaryByPlayer.get(player.id);
                   const playerName = (player.name ?? '').trim() || 'Sem nome';
                   const playerInitial = playerName.charAt(0).toUpperCase();
+                  const valorFinalCents = summary?.valorFinalCents ?? 0;
+                  const resultadoCents = summary?.resultadoCents ?? 0;
+
+                  const cashoutStatus =
+                    valorFinalCents === 0
+                      ? {
+                          className: 'loss',
+                          label: 'Zerou',
+                          Icon: TrendingDown,
+                        }
+                      : resultadoCents > 0
+                        ? {
+                            className: 'win',
+                            label: 'Ganhou',
+                            Icon: TrendingUp,
+                          }
+                        : resultadoCents === 0
+                          ? {
+                              className: 'neutral',
+                              label: 'Neutro',
+                              Icon: Minus,
+                            }
+                          : {
+                              className: 'loss',
+                              label: 'Perda',
+                              Icon: TrendingDown,
+                            };
 
                   return (
-                    <article key={player.id} className="mesa-player-row cashout-row">
+                    <article key={player.id} className={`mesa-player-row cashout-row cashout-row-${cashoutStatus.className}`}>
                       <div className="player-avatar bg-secondary-subtle text-secondary-emphasis">
                         {playerInitial}
                       </div>
@@ -507,7 +537,10 @@ export default function TableDetail() {
                         <strong>{formatCurrencyFromCents(summary?.valorFinalCents ?? 0, detail.table.currency)}</strong>
                       </div>
                       <div className="player-actions">
-                        <span className="badge text-bg-secondary">Finalizado</span>
+                        <span className={`cashout-status-badge ${cashoutStatus.className}`}>
+                          <cashoutStatus.Icon size={13} />
+                          {cashoutStatus.label}
+                        </span>
                       </div>
                     </article>
                   );
