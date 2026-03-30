@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Eye, Plus, Settings2, TableProperties } from 'lucide-react';
+import { Eye, Plus, Search, Settings2, TableProperties } from 'lucide-react';
 
 import { getApiErrorMessage } from '../services/errors';
-import { listTablesRequest } from '../services/tables';
-import type { Table } from '../types/domain';
+import { discoverTablesRequest, listTablesRequest } from '../services/tables';
+import type { DiscoverTable, Table } from '../types/domain';
 import { formatDateTime } from '../utils/format';
 
 export default function TablesList() {
   const [tables, setTables] = useState<Table[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  const [discoverResults, setDiscoverResults] = useState<DiscoverTable[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,6 +30,24 @@ export default function TablesList() {
 
     loadTables();
   }, []);
+
+  const handleSearch = async () => {
+    if (!searchTerm.trim()) {
+      setDiscoverResults([]);
+      return;
+    }
+
+    setDiscoverLoading(true);
+
+    try {
+      const results = await discoverTablesRequest(searchTerm.trim());
+      setDiscoverResults(results);
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, 'Nao foi possivel pesquisar mesas.'));
+    } finally {
+      setDiscoverLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -62,6 +83,56 @@ export default function TablesList() {
 
       {error && <div className="alert alert-danger mb-0">{error}</div>}
 
+      <div className="card p-3 d-grid gap-2">
+        <h3 className="h6 mb-0">Pesquisar mesas</h3>
+        <p className="text-secondary mb-0">Encontre por codigo ou nome automatico da mesa.</p>
+        <div className="d-flex gap-2 flex-wrap">
+          <input
+            className="form-control"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Ex.: MESA-AB12CD"
+          />
+          <button type="button" className="btn btn-outline-secondary btn-modern-outline" onClick={handleSearch} disabled={discoverLoading}>
+            <Search size={14} />
+            {discoverLoading ? 'Pesquisando...' : 'Pesquisar'}
+          </button>
+        </div>
+        {discoverResults.length > 0 && (
+          <div className="table-responsive">
+            <table className="table table-dark table-hover align-middle mb-0 modern-table">
+              <thead>
+                <tr>
+                  <th>Codigo</th>
+                  <th>Mesa</th>
+                  <th>Status</th>
+                  <th>Acoes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {discoverResults.map((table) => (
+                  <tr key={`discover-${table.id}`}>
+                    <td><strong>{table.code}</strong></td>
+                    <td>{table.name}</td>
+                    <td>{table.status === 'OPEN' ? 'Aberta' : 'Fechada'}</td>
+                    <td>
+                      <div className="d-flex gap-2">
+                        <Link to={`/app/join/${table.inviteToken}`} className="btn btn-sm btn-primary btn-modern-primary">
+                          Entrar por link
+                        </Link>
+                        <Link to={`/app/tables/${table.id}`} className="btn btn-sm btn-outline-secondary btn-modern-outline">
+                          Ver mesa
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {!error && tables.length === 0 ? (
         <div className="alert alert-info mb-0">Nenhuma mesa encontrada. Crie a primeira mesa.</div>
       ) : (
@@ -83,6 +154,7 @@ export default function TablesList() {
                   <td>
                     <div className="table-name-cell">
                       <strong>{table.name}</strong>
+                      <div className="small text-secondary">{table.code}</div>
                     </div>
                   </td>
                   <td>{table.blinds}</td>

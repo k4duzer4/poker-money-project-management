@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { TableStatus } from '@prisma/client';
+import bcrypt from 'bcrypt';
+import { TableStatus, type Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import { prisma } from '../../db/prisma';
@@ -11,9 +13,9 @@ const tablePathSchema = z.object({
 });
 
 const createTableBodySchema = z.object({
-  name: z.string().trim().min(1),
   blinds: z.string().trim().min(1),
   currency: z.string().trim().min(1),
+  accessPassword: z.string().min(4),
   valorFichaCents: z.number().int().positive(),
   buyInMinimoCents: z.number().int().positive(),
   buyInMaximoCents: z.number().int().positive().optional(),
@@ -30,9 +32,9 @@ const createTableBodySchema = z.object({
 });
 
 const updateTableBodySchema = z.object({
-  name: z.string().trim().min(1).optional(),
   blinds: z.string().trim().min(1).optional(),
   currency: z.string().trim().min(1).optional(),
+  accessPassword: z.string().min(4).optional(),
   valorFichaCents: z.number().int().positive().optional(),
   buyInMinimoCents: z.number().int().positive().optional(),
   buyInMaximoCents: z.number().int().positive().nullable().optional(),
@@ -48,12 +50,22 @@ const simpleMessageErrorSchema = {
   required: ['message'],
 } as const;
 
+const discoverTableQuerySchema = z.object({
+  q: z.string().trim().min(1),
+});
+
+const inviteTokenPathSchema = z.object({
+  inviteToken: z.string().trim().min(8),
+});
+
 const tableDetailTableSchema = {
   type: 'object',
   properties: {
     id: { type: 'string', format: 'uuid' },
     ownerUserId: { type: 'string', format: 'uuid' },
     name: { type: 'string' },
+    code: { type: 'string' },
+    inviteToken: { type: 'string' },
     blinds: { type: 'string' },
     currency: { type: 'string' },
     status: { type: 'string', enum: ['OPEN', 'CLOSED'] },
@@ -73,6 +85,7 @@ const tableDetailTableSchema = {
         properties: {
           id: { type: 'string', format: 'uuid' },
           tableId: { type: 'string', format: 'uuid' },
+          userId: { type: 'string', format: 'uuid' },
           name: { type: 'string' },
           status: { type: 'string', enum: ['ACTIVE', 'CASHOUT'] },
           createdAt: { type: 'string', format: 'date-time' },
@@ -106,6 +119,8 @@ const tableDetailTableSchema = {
     'id',
     'ownerUserId',
     'name',
+    'code',
+    'inviteToken',
     'blinds',
     'currency',
     'status',
@@ -164,6 +179,50 @@ const toTableWhereOwner = (tableId: string, userId: string) => ({
   ownerUserId: userId,
 });
 
+const toTableWhereMember = (tableId: string, userId: string) => ({
+  id: tableId,
+  OR: [
+    { ownerUserId: userId },
+    {
+      players: {
+        some: {
+          userId,
+        },
+      },
+    },
+  ],
+} as unknown as Prisma.TableWhereInput);
+
+const createTableCode = () => `MESA-${randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+
+const createInviteToken = () => randomUUID().replace(/-/g, '');
+
+const generateUniqueTableIdentifiers = async () => {
+  let code = createTableCode();
+  let inviteToken = createInviteToken();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const existing = await prisma.table.findFirst({
+      where: {
+        OR: [
+          { code },
+          { inviteToken },
+        ],
+      },
+      select: { id: true },
+    } as any);
+
+    if (!existing) {
+      return { code, inviteToken };
+    }
+
+    code = createTableCode();
+    inviteToken = createInviteToken();
+  }
+
+  throw new Error('Não foi possível gerar identificadores únicos para mesa.');
+};
+
 export const tablesRoutes = async (app: FastifyInstance) => {
   app.get('/', {
     preHandler: requireAuth,
@@ -220,11 +279,126 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     },
   }, async (request) => {
     const tables = await prisma.table.findMany({
-      where: { ownerUserId: request.user.id },
+      where: {
+        OR: [
+          { ownerUserId: request.user.id },
+          {
+            players: {
+              some: {
+                userId: request.user.id,
+              },
+            },
+          },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
-    });
+    } as any);
 
     return { tables };
+  });
+
+  app.get('/discover', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Pesquisar mesas por código ou nome',
+      security: [{ bearerAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const parsedQuery = discoverTableQuerySchema.safeParse(request.query);
+
+    if (!parsedQuery.success) {
+      return reply.status(400).send({
+        message: 'Query inválida.',
+        errors: parsedQuery.error.flatten(),
+      });
+    }
+
+    const query = parsedQuery.data.q;
+
+    const tables = await prisma.table.findMany({
+      where: {
+        status: TableStatus.OPEN,
+        OR: [
+          {
+            code: {
+              contains: query,
+              mode: 'insensitive',
+            },
+          },
+          {
+            name: {
+              contains: query,
+              mode: 'insensitive',
+            },
+          },
+        ],
+      },
+      include: {
+        players: {
+          where: {
+            userId: request.user.id,
+          },
+          select: {
+            id: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+    } as any);
+
+    return {
+      tables: tables.map((table: any) => ({
+        ...table,
+        alreadyJoined: table.players.length > 0,
+        alreadyOwner: table.ownerUserId === request.user.id,
+      })),
+    };
+  });
+
+  app.get('/invite/:inviteToken', {
+    preHandler: requireAuth,
+    schema: {
+      tags: ['Tables'],
+      summary: 'Buscar mesa por link de convite',
+      security: [{ bearerAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const parsedParams = inviteTokenPathSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({
+        message: 'Parâmetros inválidos.',
+        errors: parsedParams.error.flatten(),
+      });
+    }
+
+    const table = await prisma.table.findUnique({
+      where: { inviteToken: parsedParams.data.inviteToken },
+      include: {
+        players: {
+          where: {
+            userId: request.user.id,
+          },
+          select: {
+            id: true,
+          },
+        },
+      },
+    } as any) as any;
+
+    if (!table) {
+      return reply.status(404).send({ message: 'Mesa não encontrada.' });
+    }
+
+    return {
+      table: {
+        ...table,
+        alreadyJoined: table.players.length > 0,
+        alreadyOwner: table.ownerUserId === request.user.id,
+      },
+    };
   });
 
   app.post('/', {
@@ -254,10 +428,16 @@ export const tablesRoutes = async (app: FastifyInstance) => {
       });
     }
 
+    const identifiers = await generateUniqueTableIdentifiers();
+    const accessPasswordHash = await bcrypt.hash(parsedBody.data.accessPassword, 10);
+
     const table = await prisma.table.create({
       data: {
         ownerUserId: request.user.id,
-        name: parsedBody.data.name,
+        name: `Mesa ${identifiers.code}`,
+        code: identifiers.code,
+        inviteToken: identifiers.inviteToken,
+        accessPasswordHash,
         blinds: parsedBody.data.blinds,
         currency: parsedBody.data.currency,
         status: TableStatus.OPEN,
@@ -270,7 +450,7 @@ export const tablesRoutes = async (app: FastifyInstance) => {
         totalMesaCents: 0,
         ajusteProporcionalAplicado: false,
       },
-    });
+    } as any);
 
     return reply.status(201).send({ table });
   });
@@ -327,7 +507,7 @@ export const tablesRoutes = async (app: FastifyInstance) => {
     }
 
     const table = await prisma.table.findFirst({
-      where: toTableWhereOwner(parsedParams.data.tableId, request.user.id),
+      where: toTableWhereMember(parsedParams.data.tableId, request.user.id),
       include: {
         players: {
           orderBy: { createdAt: 'asc' },
@@ -345,21 +525,21 @@ export const tablesRoutes = async (app: FastifyInstance) => {
           },
         },
       },
-    });
+    } as any) as any;
 
     if (!table) {
       return reply.status(404).send({ message: 'Mesa não encontrada.' });
     }
 
-    const totalInvestidoGeral = table.players.reduce((acc, player) => acc + player.totalInvestidoCents, 0);
-    const totalFinalGeral = table.players.reduce((acc, player) => acc + (player.valorFinalCents ?? 0), 0);
+    const totalInvestidoGeral = table.players.reduce((acc: number, player: any) => acc + player.totalInvestidoCents, 0);
+    const totalFinalGeral = table.players.reduce((acc: number, player: any) => acc + (player.valorFinalCents ?? 0), 0);
     const differenceCents = totalInvestidoGeral - totalFinalGeral;
-    const hasActivePlayers = table.players.some((player) => player.status === 'ACTIVE');
+    const hasActivePlayers = table.players.some((player: any) => player.status === 'ACTIVE');
 
     const transfers = calculateTransfers(
       table.players
-        .filter((player) => player.resultadoCents !== null)
-        .map((player) => ({
+        .filter((player: any) => player.resultadoCents !== null)
+        .map((player: any) => ({
           name: player.name,
           resultadoCents: player.resultadoCents ?? 0,
         })),
@@ -367,12 +547,12 @@ export const tablesRoutes = async (app: FastifyInstance) => {
 
     const summary = {
       totalPlayers: table.players.length,
-      activePlayers: table.players.filter((player) => player.status === 'ACTIVE').length,
+      activePlayers: table.players.filter((player: any) => player.status === 'ACTIVE').length,
       totalTransactions: table.transactions.length,
       totalInvestidoCents: totalInvestidoGeral,
       totalFinalCents: totalFinalGeral,
       totalMesaCents: table.totalMesaCents,
-      players: table.players.map((player) => ({
+      players: table.players.map((player: any) => ({
         playerId: player.id,
         name: player.name,
         status: player.status,
@@ -380,7 +560,7 @@ export const tablesRoutes = async (app: FastifyInstance) => {
         totalInvestidoCents: player.totalInvestidoCents,
         valorFinalCents: player.valorFinalCents,
         resultadoCents: player.resultadoCents,
-        rebuysCount: table.transactions.filter((tx) => tx.tablePlayerId === player.id && tx.type === 'REBUY').length,
+        rebuysCount: table.transactions.filter((tx: any) => tx.tablePlayerId === player.id && tx.type === 'REBUY').length,
       })),
     };
 
@@ -431,9 +611,32 @@ export const tablesRoutes = async (app: FastifyInstance) => {
       return reply.status(404).send({ message: 'Mesa não encontrada.' });
     }
 
+    const updateData: {
+      blinds?: string;
+      currency?: string;
+      valorFichaCents?: number;
+      buyInMinimoCents?: number;
+      buyInMaximoCents?: number | null;
+      permitirRebuy?: boolean;
+      limiteRebuys?: number;
+      accessPasswordHash?: string;
+    } = {
+      blinds: parsedBody.data.blinds,
+      currency: parsedBody.data.currency,
+      valorFichaCents: parsedBody.data.valorFichaCents,
+      buyInMinimoCents: parsedBody.data.buyInMinimoCents,
+      buyInMaximoCents: parsedBody.data.buyInMaximoCents,
+      permitirRebuy: parsedBody.data.permitirRebuy,
+      limiteRebuys: parsedBody.data.limiteRebuys,
+    };
+
+    if (parsedBody.data.accessPassword) {
+      updateData.accessPasswordHash = await bcrypt.hash(parsedBody.data.accessPassword, 10);
+    }
+
     const updatedTable = await prisma.table.update({
       where: { id: table.id },
-      data: parsedBody.data,
+      data: updateData,
     });
 
     return { table: updatedTable };

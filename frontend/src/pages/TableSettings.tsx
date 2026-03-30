@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Coins, Lock, Save, Settings2, ShieldAlert, Unlock } from 'lucide-react';
+import { ArrowLeft, Lock, Save, Settings2, ShieldAlert, Unlock } from 'lucide-react';
 
 import ConfirmModal from '../components/ConfirmModal';
 import { getApiErrorMessage } from '../services/errors';
@@ -47,9 +47,9 @@ export default function TableSettings() {
   const addToast = useUIStore((state) => state.addToast);
 
   const [table, setTable] = useState<Table | null>(null);
-  const [name, setName] = useState('');
   const [blinds, setBlinds] = useState('');
   const [currency, setCurrency] = useState('');
+  const [newAccessPassword, setNewAccessPassword] = useState('');
   const [valorFichaReais, setValorFichaReais] = useState('');
   const [buyInMinimoReais, setBuyInMinimoReais] = useState('');
   const [buyInMaximoReais, setBuyInMaximoReais] = useState('');
@@ -73,7 +73,6 @@ export default function TableSettings() {
       try {
         const response = await getTableRequest(tableId);
         setTable(response.table);
-        setName(response.table.name);
         setBlinds(response.table.blinds);
         setCurrency(response.table.currency);
         setValorFichaReais(formatCentsToInput(response.table.valorFichaCents));
@@ -114,9 +113,9 @@ export default function TableSettings() {
       }
 
       const updated = await updateTableRequest(tableId, {
-        name,
         blinds,
         currency: currency.toUpperCase(),
+        accessPassword: newAccessPassword.trim() || undefined,
         valorFichaCents,
         buyInMinimoCents,
         buyInMaximoCents,
@@ -124,6 +123,7 @@ export default function TableSettings() {
         limiteRebuys: Number(limiteRebuys),
       });
       setTable(updated);
+      setNewAccessPassword('');
       addToast('Mesa atualizada com sucesso.', 'success');
     } catch (requestError) {
       const message = getApiErrorMessage(requestError, 'Nao foi possivel atualizar a mesa.');
@@ -216,19 +216,6 @@ export default function TableSettings() {
 
       <form onSubmit={handleSave} className="card p-3 d-grid gap-3 settings-shell">
         <div>
-          <label htmlFor="settings-name" className="form-label d-inline-flex align-items-center gap-2">
-            <Coins size={14} />
-            Nome
-          </label>
-          <input
-            id="settings-name"
-            className="form-control"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            required
-          />
-        </div>
-        <div>
           <label htmlFor="settings-blinds" className="form-label">
             Blinds
           </label>
@@ -250,6 +237,22 @@ export default function TableSettings() {
             value={currency}
             onChange={(event) => setCurrency(event.target.value)}
             required
+          />
+        </div>
+
+        <div>
+          <label htmlFor="settings-password" className="form-label d-inline-flex align-items-center gap-2">
+            <Lock size={14} />
+            Nova senha da mesa (opcional)
+          </label>
+          <input
+            id="settings-password"
+            className="form-control"
+            type="password"
+            minLength={4}
+            value={newAccessPassword}
+            onChange={(event) => setNewAccessPassword(event.target.value)}
+            placeholder="Deixe em branco para manter a atual"
           />
         </div>
 

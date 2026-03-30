@@ -1,5 +1,5 @@
 import api from './http';
-import type { Table, TableDetailResponse } from '../types/domain';
+import type { DiscoverTable, Table, TableDetailResponse } from '../types/domain';
 
 const normalizeTableStatus = (status: unknown, closedAt: string | null | undefined): 'OPEN' | 'CLOSED' => {
   if (typeof status === 'string') {
@@ -25,9 +25,9 @@ export const listTablesRequest = async () => {
 };
 
 export const createTableRequest = async (payload: {
-  name: string;
   blinds: string;
   currency: string;
+  accessPassword: string;
   valorFichaCents: number;
   buyInMinimoCents: number;
   buyInMaximoCents?: number;
@@ -51,7 +51,6 @@ export const updateTableRequest = async (
   payload: Partial<
     Pick<
       Table,
-      | 'name'
       | 'blinds'
       | 'currency'
       | 'valorFichaCents'
@@ -59,7 +58,9 @@ export const updateTableRequest = async (
       | 'buyInMaximoCents'
       | 'permitirRebuy'
       | 'limiteRebuys'
-    >
+    > & {
+      accessPassword?: string;
+    }
   >,
 ) => {
   const { data } = await api.patch<{ table: Table }>(`/tables/${tableId}`, payload);
@@ -78,5 +79,18 @@ export const closeTableRequest = async (tableId: string) => {
 
 export const reopenTableRequest = async (tableId: string) => {
   const { data } = await api.patch<{ table: Table }>(`/tables/${tableId}/reopen`);
+  return normalizeTable(data.table);
+};
+
+export const discoverTablesRequest = async (query: string) => {
+  const { data } = await api.get<{ tables: DiscoverTable[] }>('/tables/discover', {
+    params: { q: query },
+  });
+
+  return data.tables.map((table) => normalizeTable(table));
+};
+
+export const getInviteTableRequest = async (inviteToken: string) => {
+  const { data } = await api.get<{ table: DiscoverTable }>(`/tables/invite/${inviteToken}`);
   return normalizeTable(data.table);
 };

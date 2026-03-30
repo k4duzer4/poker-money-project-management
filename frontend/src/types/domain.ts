@@ -1,6 +1,8 @@
 export type TableStatus = 'OPEN' | 'CLOSED';
 export type PlayerStatus = 'ACTIVE' | 'CASHOUT';
 export type TransactionType = 'BUY_IN' | 'REBUY' | 'CASH_OUT' | 'ADJUSTMENT';
+export type PendingPlayerActionType = 'REBUY' | 'CASH_OUT';
+export type PendingPlayerActionStatus = 'PENDING' | 'APPROVED' | 'DENIED';
 
 export type User = {
   id: string;
@@ -11,6 +13,8 @@ export type Table = {
   id: string;
   ownerUserId: string;
   name: string;
+  code: string;
+  inviteToken: string;
   blinds: string;
   currency: string;
   valorFichaCents: number;
@@ -28,6 +32,7 @@ export type Table = {
 export type Player = {
   id: string;
   tableId: string;
+  userId: string;
   name: string;
   status: PlayerStatus;
   buyInInicialCents: number;
@@ -93,4 +98,40 @@ export type TableDetailResponse = {
   summary: TableSummary;
   transfers: Transfer[];
   closure: ClosureInfo;
+};
+
+export type DiscoverTable = Table & {
+  alreadyJoined: boolean;
+  alreadyOwner: boolean;
+};
+
+export type PendingPlayerAction = {
+  id: string;
+  tableId: string;
+  tablePlayerId: string;
+  requesterUserId: string;
+  approverUserId: string;
+  decidedByUserId: string | null;
+  type: PendingPlayerActionType;
+  amountCents: number;
+  status: PendingPlayerActionStatus;
+  createdAt: string;
+  decidedAt: string | null;
+  requester: {
+    id: string;
+    email: string;
+  };
+  tablePlayer: {
+    id: string;
+    name: string;
+    userId: string;
+    status: PlayerStatus;
+  };
+};
+
+export type PlayerActionResponse = {
+  requiresApproval: boolean;
+  message?: string;
+  player?: Player;
+  pendingAction?: PendingPlayerAction;
 };

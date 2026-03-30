@@ -3,6 +3,9 @@ import { Link, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeft,
+  Bell,
+  Check,
+  Copy,
   Coins,
   DollarSign,
   Minus,
@@ -13,6 +16,7 @@ import {
   TrendingUp,
   UserPlus,
   Users,
+  X,
 } from 'lucide-react';
 
 import { getApiErrorMessage } from '../services/errors';
@@ -20,15 +24,18 @@ import {
   cashoutPlayerRequest,
   createPlayerRequest,
   listPlayersRequest,
+  listPendingPlayerActionsRequest,
   rebuyPlayerRequest,
+  respondPendingPlayerActionRequest,
 } from '../services/players';
 import {
   closeTableRequest,
   getTableRequest,
   reopenTableRequest,
 } from '../services/tables';
+import { useAuthStore } from '../stores/authStore';
 import { useUIStore } from '../stores/uiStore';
-import type { Player, TableDetailResponse } from '../types/domain';
+import type { PendingPlayerAction, Player, TableDetailResponse } from '../types/domain';
 import { formatCurrencyFromCents, formatDateTime } from '../utils/format';
 
 const parseCurrencyToCents = (value: string, options?: { allowZero?: boolean }) => {
@@ -77,14 +84,17 @@ const formatCentsToInputReais = (cents: number) => {
 export default function TableDetail() {
   const { tableId } = useParams<{ tableId: string }>();
   const addToast = useUIStore((state) => state.addToast);
+  const user = useAuthStore((state) => state.user);
 
   const [detail, setDetail] = useState<TableDetailResponse | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingActions, setPendingActions] = useState<PendingPlayerAction[]>([]);
+  const [pendingDecisionActionId, setPendingDecisionActionId] = useState<string | null>(null);
 
   const [addPlayerOpen, setAddPlayerOpen] = useState(false);
-  const [addPlayerName, setAddPlayerName] = useState('');
+  const [addPlayerPassword, setAddPlayerPassword] = useState('');
   const [addPlayerBuyInReais, setAddPlayerBuyInReais] = useState('');
   const [addPlayerLoading, setAddPlayerLoading] = useState(false);
 
@@ -105,13 +115,15 @@ export default function TableDetail() {
 
     try {
       setError(null);
-      const [tableResponse, playersResponse] = await Promise.all([
+      const [tableResponse, playersResponse, pendingActionsResponse] = await Promise.all([
         getTableRequest(tableId),
         listPlayersRequest(tableId),
+        listPendingPlayerActionsRequest(tableId),
       ]);
 
       setDetail(tableResponse);
       setPlayers(playersResponse);
+      setPendingActions(pendingActionsResponse);
     } catch (requestError) {
       setError(getApiErrorMessage(requestError, 'Nao foi possivel carregar a mesa.'));
     } finally {
@@ -121,6 +133,25 @@ export default function TableDetail() {
 
   useEffect(() => {
     loadDetail(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableId]);
+
+  useEffect(() => {
+    if (!tableId) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) {
+        return;
+      }
+
+      loadDetail(false);
+    }, 3000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableId]);
 
@@ -182,9 +213,28 @@ export default function TableDetail() {
 
   const openAddPlayerModal = () => {
     const defaultBuyIn = detail?.table.buyInMinimoCents ?? 0;
-    setAddPlayerName('');
+    setAddPlayerPassword('');
     setAddPlayerBuyInReais(formatCentsToInputReais(defaultBuyIn));
     setAddPlayerOpen(true);
+  };
+
+  const currentUserPlayer = players.find((player) => player.userId === user?.id);
+  const isOwner = detail?.table.ownerUserId === user?.id;
+  const canJoinCurrentTable = detail?.table.status === 'OPEN' && !currentUserPlayer;
+
+  const handleCopyInvite = async () => {
+    if (!detail) {
+      return;
+    }
+
+    const inviteLink = `${window.location.origin}/app/join/${detail.table.inviteToken}`;
+
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      addToast('Link de convite copiado.', 'success');
+    } catch {
+      addToast('Nao foi possivel copiar o link.', 'error');
+    }
   };
 
   const openRebuyModal = (playerId: string) => {
@@ -207,6 +257,27 @@ export default function TableDetail() {
 
   const closeRebuyModal = () => setRebuyModal(defaultTxModalState);
   const closeCashoutModal = () => setCashoutModal(defaultTxModalState);
+
+  const formatPendingActionLabel = (type: PendingPlayerAction['type']) => {
+    return type === 'REBUY' ? 'Rebuy' : 'Cash Out';
+  };
+
+  const handlePendingActionDecision = async (actionId: string, decision: 'APPROVE' | 'DENY') => {
+    setPendingDecisionActionId(actionId);
+
+    try {
+      const response = await respondPendingPlayerActionRequest(actionId, decision);
+      addToast(
+        response.message ?? (decision === 'APPROVE' ? 'Solicitacao aprovada.' : 'Solicitacao negada.'),
+        decision === 'APPROVE' ? 'success' : 'info',
+      );
+      await loadDetail(false);
+    } catch (requestError) {
+      addToast(getApiErrorMessage(requestError, 'Nao foi possivel processar a solicitacao.'), 'error');
+    } finally {
+      setPendingDecisionActionId(null);
+    }
+  };
 
   const handleAddPlayer = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -234,7 +305,7 @@ export default function TableDetail() {
         );
       }
 
-      const createdPlayer = await createPlayerRequest(tableId, addPlayerName, finalBuyInCents);
+      const createdPlayer = await createPlayerRequest(tableId, addPlayerPassword, finalBuyInCents);
 
       setPlayers((current) => {
         if (current.some((player) => player.id === createdPlayer.id)) {
@@ -243,13 +314,13 @@ export default function TableDetail() {
         return [...current, createdPlayer];
       });
 
-      setAddPlayerName('');
+      setAddPlayerPassword('');
       setAddPlayerBuyInReais('');
       setAddPlayerOpen(false);
-      addToast('Jogador adicionado.', 'success');
+      addToast('Entrada na mesa confirmada.', 'success');
       await loadDetail(false);
     } catch (requestError) {
-      const message = getApiErrorMessage(requestError, 'Nao foi possivel adicionar jogador.');
+      const message = getApiErrorMessage(requestError, 'Nao foi possivel entrar na mesa.');
       addToast(message, 'error');
 
       if (message.toLowerCase().includes('mesa encerrada')) {
@@ -276,8 +347,14 @@ export default function TableDetail() {
     setTxSubmitting(true);
 
     try {
-      await rebuyPlayerRequest(rebuyModal.playerId, amountCents);
-      addToast('Rebuy confirmado.', 'success');
+      const response = await rebuyPlayerRequest(rebuyModal.playerId, amountCents);
+
+      if (response.requiresApproval) {
+        addToast(response.message ?? 'Solicitacao de rebuy enviada para aprovacao.', 'info');
+      } else {
+        addToast('Rebuy confirmado.', 'success');
+      }
+
       closeRebuyModal();
       await loadDetail(false);
     } catch (requestError) {
@@ -306,8 +383,14 @@ export default function TableDetail() {
     setTxSubmitting(true);
 
     try {
-      await cashoutPlayerRequest(cashoutModal.playerId, amountCents);
-      addToast('Cash out confirmado.', 'success');
+      const response = await cashoutPlayerRequest(cashoutModal.playerId, amountCents);
+
+      if (response.requiresApproval) {
+        addToast(response.message ?? 'Solicitacao de cash out enviada para aprovacao.', 'info');
+      } else {
+        addToast('Cash out confirmado.', 'success');
+      }
+
       closeCashoutModal();
       await loadDetail(false);
     } catch (requestError) {
@@ -386,6 +469,7 @@ export default function TableDetail() {
             <span className={`badge ${detail.table.status === 'OPEN' ? 'text-bg-success' : 'text-bg-secondary'}`}>
               {detail.table.status === 'OPEN' ? 'Ativa' : 'Fechada'}
             </span>
+            <span className="badge text-bg-dark">Codigo: {detail.table.code}</span>
           </div>
           <p className="text-secondary mb-0 mt-1">Criada em {formatDateTime(detail.table.createdAt)}</p>
         </div>
@@ -395,17 +479,72 @@ export default function TableDetail() {
             type="button"
             className="btn btn-primary btn-modern-primary"
             onClick={openAddPlayerModal}
-            disabled={detail.table.status !== 'OPEN'}
+            disabled={!canJoinCurrentTable}
           >
             <UserPlus size={15} />
-            Adicionar Jogador
+            {currentUserPlayer ? 'Voce ja entrou' : 'Entrar na mesa'}
           </button>
-          <Link to={`/app/tables/${detail.table.id}/settings`} className="btn btn-outline-secondary btn-modern-outline">
-            <Settings size={14} />
-            Configurar
-          </Link>
+          <button type="button" className="btn btn-outline-secondary btn-modern-outline" onClick={handleCopyInvite}>
+            <Copy size={14} />
+            Copiar link
+          </button>
+          {isOwner && (
+            <Link to={`/app/tables/${detail.table.id}/settings`} className="btn btn-outline-secondary btn-modern-outline">
+              <Settings size={14} />
+              Configurar
+            </Link>
+          )}
         </div>
       </header>
+
+      {pendingActions.length > 0 && (
+        <section className="mesa-pending card p-3">
+          <div className="mesa-pending-header">
+            <h3 className="h6 mb-0 d-inline-flex align-items-center gap-2">
+              <Bell size={16} />
+              Solicitacoes pendentes ({pendingActions.length})
+            </h3>
+            <span className="mesa-pending-subtitle">Aguardando sua aprovacao para concluir a acao.</span>
+          </div>
+
+          <div className="d-grid gap-2 mt-2">
+            {pendingActions.map((action) => (
+              <article key={action.id} className="mesa-pending-item">
+                <div className="mesa-pending-copy">
+                  <p className="mesa-pending-line mb-1">
+                    <span className="mesa-pending-tag">{formatPendingActionLabel(action.type)}</span>
+                    <span>
+                      <strong>{action.requester.email}</strong> solicitou para <strong>{action.tablePlayer.name}</strong>
+                    </span>
+                  </p>
+                  <p className="mesa-pending-meta mb-0">
+                    Valor solicitado:{' '}
+                    <strong>{formatCurrencyFromCents(action.amountCents, detail.table.currency)}</strong>
+                  </p>
+                </div>
+                <div className="d-flex gap-2 mesa-pending-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-success mesa-pending-btn"
+                    disabled={pendingDecisionActionId === action.id}
+                    onClick={() => handlePendingActionDecision(action.id, 'APPROVE')}
+                  >
+                    <Check size={14} /> Aceitar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-danger mesa-pending-btn"
+                    disabled={pendingDecisionActionId === action.id}
+                    onClick={() => handlePendingActionDecision(action.id, 'DENY')}
+                  >
+                    <X size={14} /> Negar
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="mesa-top-cards">
         <article className="mesa-stat-card">
@@ -553,11 +692,11 @@ export default function TableDetail() {
             <div className="mesa-empty-state mt-3">
               <Users size={28} />
               <h4>Nenhum jogador ainda</h4>
-              <p>Adicione jogadores para iniciar a mesa.</p>
+              <p>Entre na mesa para iniciar.</p>
               {detail.table.status === 'OPEN' && (
                 <button type="button" className="btn btn-primary btn-modern-primary" onClick={openAddPlayerModal}>
                   <UserPlus size={15} />
-                  Adicionar Jogador
+                  Entrar na mesa
                 </button>
               )}
             </div>
@@ -589,23 +728,29 @@ export default function TableDetail() {
             </div>
           </div>
 
-          {detail.table.status === 'OPEN' ? (
-            <button
-              type="button"
-              className="btn btn-danger w-100 mt-2"
-              onClick={() => handleTableStatus('close')}
-              disabled={!detail.closure.canClose}
-            >
-              Encerrar Mesa
-            </button>
+          {isOwner ? (
+            detail.table.status === 'OPEN' ? (
+              <button
+                type="button"
+                className="btn btn-danger w-100 mt-2"
+                onClick={() => handleTableStatus('close')}
+                disabled={!detail.closure.canClose}
+              >
+                Encerrar Mesa
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary w-100 mt-2"
+                onClick={() => handleTableStatus('reopen')}
+              >
+                Reabrir Mesa
+              </button>
+            )
           ) : (
-            <button
-              type="button"
-              className="btn btn-primary w-100 mt-2"
-              onClick={() => handleTableStatus('reopen')}
-            >
-              Reabrir Mesa
-            </button>
+            <div className="alert alert-secondary mb-0 mt-2">
+              Apenas o dono da mesa pode encerrar ou reabrir.
+            </div>
           )}
         </aside>
       </section>
@@ -619,17 +764,18 @@ export default function TableDetail() {
                   <div className="modal-header">
                     <h5 className="modal-title d-inline-flex align-items-center gap-2">
                       <UserPlus size={16} />
-                      Adicionar Jogador
+                      Entrar na mesa
                     </h5>
                     <button type="button" className="btn-close" onClick={() => setAddPlayerOpen(false)} />
                   </div>
                   <div className="modal-body d-grid gap-3">
-                    <label className="form-label">Nome</label>
+                    <label className="form-label">Senha da mesa</label>
                     <input
+                      type="password"
                       className="form-control"
-                      value={addPlayerName}
-                      onChange={(event) => setAddPlayerName(event.target.value)}
-                      placeholder="Ex.: Carlos"
+                      value={addPlayerPassword}
+                      onChange={(event) => setAddPlayerPassword(event.target.value)}
+                      placeholder="Digite a senha da mesa"
                       required
                     />
 
@@ -668,7 +814,7 @@ export default function TableDetail() {
                       Cancelar
                     </button>
                     <button type="submit" className="btn btn-primary" disabled={addPlayerLoading}>
-                      {addPlayerLoading ? 'Adicionando...' : 'Adicionar'}
+                      {addPlayerLoading ? 'Entrando...' : 'Entrar'}
                     </button>
                   </div>
                 </form>
