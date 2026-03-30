@@ -1,0 +1,3 @@
+-- No-op migration.
+-- The table-player user link changes were consolidated in
+-- 20260330083000_table_discovery_and_membership.

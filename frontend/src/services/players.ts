@@ -1,5 +1,5 @@
 import api from './http';
-import type { Player } from '../types/domain';
+import type { PendingPlayerAction, Player, PlayerActionResponse } from '../types/domain';
 
 const normalizePlayerStatus = (status: unknown): 'ACTIVE' | 'CASHOUT' => {
   if (typeof status === 'string') {
@@ -34,20 +34,38 @@ export const listPlayersRequest = async (tableId: string) => {
   return data.players.map((player) => normalizePlayer(player));
 };
 
-export const createPlayerRequest = async (tableId: string, name: string, buyInCents?: number) => {
-  const payload = buyInCents ? { name, buyInCents } : { name };
+export const createPlayerRequest = async (tableId: string, accessPassword: string, buyInCents?: number) => {
+  const payload = buyInCents ? { accessPassword, buyInCents } : { accessPassword };
   const { data } = await api.post<{ player: Player }>(`/players/table/${tableId}`, payload);
   return normalizePlayer(data.player);
 };
 
 export const rebuyPlayerRequest = async (playerId: string, amountCents: number) => {
-  const { data } = await api.patch<{ player: Player }>(`/players/${playerId}/rebuy`, { amountCents });
-  return normalizePlayer(data.player);
+  const { data } = await api.patch<PlayerActionResponse>(`/players/${playerId}/rebuy`, { amountCents });
+
+  return {
+    ...data,
+    player: data.player ? normalizePlayer(data.player) : undefined,
+  };
 };
 
 export const cashoutPlayerRequest = async (playerId: string, valorFinalCents: number) => {
-  const { data } = await api.patch<{ player: Player }>(`/players/${playerId}/cashout`, { valorFinalCents });
-  return normalizePlayer(data.player);
+  const { data } = await api.patch<PlayerActionResponse>(`/players/${playerId}/cashout`, { valorFinalCents });
+
+  return {
+    ...data,
+    player: data.player ? normalizePlayer(data.player) : undefined,
+  };
+};
+
+export const listPendingPlayerActionsRequest = async (tableId: string) => {
+  const { data } = await api.get<{ actions: PendingPlayerAction[] }>(`/players/table/${tableId}/pending-actions`);
+  return data.actions;
+};
+
+export const respondPendingPlayerActionRequest = async (actionId: string, decision: 'APPROVE' | 'DENY') => {
+  const { data } = await api.patch<{ message?: string }>(`/players/actions/${actionId}/respond`, { decision });
+  return data;
 };
 
 export const editCashoutPlayerRequest = async (playerId: string, valorFinalCents: number) => {

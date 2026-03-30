@@ -24,6 +24,17 @@ enum TxType {
   ADJUSTMENT
 }
 
+enum PendingPlayerActionType {
+  REBUY
+  CASH_OUT
+}
+
+enum PendingPlayerActionStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
 model User {
   id           String  @id @default(uuid()) @db.Uuid
   email        String  @unique
@@ -31,12 +42,19 @@ model User {
   createdAt    DateTime @default(now())
 
   tables       Table[]
+  tablePlayers TablePlayer[]
+  requestedPlayerActions PendingPlayerAction[] @relation("RequestedPlayerActions")
+  approverPlayerActions  PendingPlayerAction[] @relation("ApproverPlayerActions")
+  decidedPlayerActions   PendingPlayerAction[] @relation("DecidedPlayerActions")
 }
 
 model Table {
   id                         String       @id @default(uuid()) @db.Uuid
   ownerUserId                String       @db.Uuid
   name                       String
+  code                       String       @unique
+  inviteToken                String       @unique
+  accessPasswordHash         String
   blinds                     String
   currency                   String
   status                     TableStatus  @default(OPEN)
@@ -54,6 +72,7 @@ model Table {
   players     TablePlayer[]
   transactions Transaction[]
   rankings    Ranking[]
+  pendingPlayerActions PendingPlayerAction[]
 
   @@index([ownerUserId])
 }
@@ -61,6 +80,7 @@ model Table {
 model TablePlayer {
   id                String       @id @default(uuid()) @db.Uuid
   tableId           String       @db.Uuid
+  userId            String       @db.Uuid
   name              String
   status            PlayerStatus @default(ACTIVE)
   createdAt         DateTime     @default(now())
@@ -71,9 +91,37 @@ model TablePlayer {
   cashoutAt         DateTime?
 
   table        Table          @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   transactions Transaction[]
+  pendingActions PendingPlayerAction[]
 
   @@index([tableId])
+  @@index([userId])
+  @@unique([tableId, userId])
+}
+
+model PendingPlayerAction {
+  id              String                    @id @default(uuid()) @db.Uuid
+  tableId         String                    @db.Uuid
+  tablePlayerId   String                    @db.Uuid
+  requesterUserId String                    @db.Uuid
+  approverUserId  String                    @db.Uuid
+  decidedByUserId String?                   @db.Uuid
+  type            PendingPlayerActionType
+  amountCents     Int
+  status          PendingPlayerActionStatus @default(PENDING)
+  createdAt       DateTime                  @default(now())
+  decidedAt       DateTime?
+
+  table      Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  tablePlayer TablePlayer @relation(fields: [tablePlayerId], references: [id], onDelete: Cascade)
+  requester  User        @relation("RequestedPlayerActions", fields: [requesterUserId], references: [id], onDelete: Cascade)
+  approver   User        @relation("ApproverPlayerActions", fields: [approverUserId], references: [id], onDelete: Cascade)
+  decidedBy  User?       @relation("DecidedPlayerActions", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tableId])
+  @@index([approverUserId, status])
+  @@index([tablePlayerId, type, status])
 }
 
 model Transaction {

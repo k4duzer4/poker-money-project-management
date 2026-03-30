@@ -6,6 +6,7 @@ import ToastCenter from './components/ToastCenter';
 import AppLayout from './layouts/AppLayout';
 import PublicLayout from './layouts/PublicLayout';
 import Dashboard from './pages/Dashboard';
+import JoinTable from './pages/JoinTable';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import NewTable from './pages/NewTable';
@@ -42,6 +43,7 @@ export const App = () => {
             <Route index element={<Dashboard />} />
             <Route path="tables" element={<TablesList />} />
             <Route path="tables/new" element={<NewTable />} />
+            <Route path="join/:inviteToken" element={<JoinTable />} />
             <Route path="tables/:tableId" element={<TableDetail />} />
             <Route path="tables/:tableId/settings" element={<TableSettings />} />
           </Route>

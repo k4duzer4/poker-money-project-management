@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Coins, CornerRightUp, DollarSign, Plus, Sparkles } from 'lucide-react';
+import { Coins, DollarSign, Lock, Plus, Sparkles } from 'lucide-react';
 
 import { getApiErrorMessage } from '../services/errors';
 import { createTableRequest } from '../services/tables';
@@ -31,9 +31,9 @@ export default function NewTable() {
   const navigate = useNavigate();
   const addToast = useUIStore((state) => state.addToast);
 
-  const [name, setName] = useState('');
   const [blinds, setBlinds] = useState('1/2');
   const [currency, setCurrency] = useState('BRL');
+  const [accessPassword, setAccessPassword] = useState('');
   const [valorFichaReais, setValorFichaReais] = useState('1');
   const [buyInMinimoReais, setBuyInMinimoReais] = useState('50');
   const [buyInMaximoReais, setBuyInMaximoReais] = useState('');
@@ -62,9 +62,9 @@ export default function NewTable() {
       }
 
       const table = await createTableRequest({
-        name,
         blinds,
         currency: currency.toUpperCase(),
+        accessPassword,
         valorFichaCents,
         buyInMinimoCents,
         buyInMaximoCents,
@@ -100,21 +100,6 @@ export default function NewTable() {
       {error && <div className="alert alert-danger mb-0">{error}</div>}
 
       <form onSubmit={handleSubmit} className="card p-3 d-grid gap-3 create-shell">
-        <div>
-          <label htmlFor="table-name" className="form-label d-inline-flex align-items-center gap-2">
-            <CornerRightUp size={14} />
-            Nome da mesa
-          </label>
-          <input
-            id="table-name"
-            className="form-control"
-            placeholder="Ex.: Poker Night Sexta"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            required
-          />
-        </div>
-
         <div className="row g-3">
           <div className="col-12 col-md-6">
             <label htmlFor="table-blinds" className="form-label d-inline-flex align-items-center gap-2">
@@ -146,6 +131,23 @@ export default function NewTable() {
               required
             />
           </div>
+        </div>
+
+        <div>
+          <label htmlFor="table-password" className="form-label d-inline-flex align-items-center gap-2">
+            <Lock size={14} />
+            Senha da mesa
+          </label>
+          <input
+            id="table-password"
+            className="form-control"
+            type="password"
+            value={accessPassword}
+            onChange={(event) => setAccessPassword(event.target.value)}
+            minLength={4}
+            placeholder="Minimo de 4 caracteres"
+            required
+          />
         </div>
 
         <div className="row g-3">
